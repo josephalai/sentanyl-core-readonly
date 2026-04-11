@@ -29,7 +29,7 @@ func NewServiceBridge(lmsBaseURL, marketingBaseURL string) *ServiceBridge {
 
 // HydrateLMS sends data to the LMS service for hydration.
 func (b *ServiceBridge) HydrateLMS(data []byte) error {
-	url := b.LMSBaseURL + "/api/internal/hydrate"
+	url := b.LMSBaseURL + "/internal/hydrate-lms"
 	resp, err := b.client.Post(url, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("lms hydrate request failed: %w", err)
@@ -45,7 +45,7 @@ func (b *ServiceBridge) HydrateLMS(data []byte) error {
 
 // HydrateFunnel sends data to the marketing/funnel service for hydration.
 func (b *ServiceBridge) HydrateFunnel(data []byte) error {
-	url := b.MarketingBaseURL + "/api/internal/hydrate"
+	url := b.MarketingBaseURL + "/internal/hydrate-funnel"
 	resp, err := b.client.Post(url, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("funnel hydrate request failed: %w", err)
