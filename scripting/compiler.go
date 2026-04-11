@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	sentanyl "sentanyl/story/sentanyl"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -14,33 +14,33 @@ import (
 // CompileResult holds the output of the compiler.
 type CompileResult struct {
 	// The top-level Story entities ready for persistence.
-	Stories []*sentanyl.Story
+	Stories []*pkgmodels.Story
 
 	// The top-level Funnel entities ready for persistence.
-	Funnels []*sentanyl.Funnel
+	Funnels []*pkgmodels.Funnel
 
 	// The top-level Site entities ready for persistence.
-	Sites []*sentanyl.Site
+	Sites []*pkgmodels.Site
 
 	// E-Commerce entities
-	Products []*sentanyl.Product
-	Offers   []*sentanyl.Offer
+	Products []*pkgmodels.Product
+	Offers   []*pkgmodels.Offer
 
 	// Pending asset generation jobs (lead magnets, worksheets, etc.)
-	Assets []*sentanyl.Asset
+	Assets []*pkgmodels.Asset
 
 	// Video Intelligence entities
-	MediaEntities   []*sentanyl.Media
-	PlayerPresets   []*sentanyl.PlayerPreset
-	Channels        []*sentanyl.MediaChannel
-	MediaWebhooks   []*sentanyl.MediaWebhook
+	MediaEntities   []*pkgmodels.Media
+	PlayerPresets   []*pkgmodels.PlayerPreset
+	Channels        []*pkgmodels.MediaChannel
+	MediaWebhooks   []*pkgmodels.MediaWebhook
 
 	// LMS entities
-	Quizzes []*sentanyl.LMSQuiz
+	Quizzes []*pkgmodels.LMSQuiz
 
 	// All entities generated, keyed by name for reference.
-	Badges         map[string]*sentanyl.Badge
-	Tags           map[string]*sentanyl.Tag
+	Badges         map[string]*pkgmodels.Badge
+	Tags           map[string]*pkgmodels.Tag
 
 	// Diagnostics from the compilation pass.
 	Diagnostics Diagnostics
@@ -55,26 +55,26 @@ type Compiler struct {
 	errors       Diagnostics
 
 	// Generated entity maps
-	badges       map[string]*sentanyl.Badge
-	tags         map[string]*sentanyl.Tag
+	badges       map[string]*pkgmodels.Badge
+	tags         map[string]*pkgmodels.Tag
 
 	// Named reference maps for wiring
-	storyMap     map[string]*sentanyl.Story        // "story_name" -> entity (for next_story resolution)
-	storylineMap map[string]*sentanyl.Storyline   // "story:storyline" -> entity
-	enactmentMap map[string]*sentanyl.Enactment   // "story:storyline:enactment" -> entity
-	sceneMap     map[string]*sentanyl.Scene        // "story:storyline:enactment:scene" -> entity
-	funnelMap    map[string]*sentanyl.Funnel       // "funnel_name" -> entity
-	stageMap     map[string]*sentanyl.FunnelStage  // "funnel:route:stage" -> entity
-	productMap   map[string]*sentanyl.Product      // "product_name" -> entity
-	offerMap     map[string]*sentanyl.Offer        // "offer_name" -> entity
-	mediaMap     map[string]*sentanyl.Media        // "media_name" -> entity
-	presetMap    map[string]*sentanyl.PlayerPreset  // "preset_name" -> entity
+	storyMap     map[string]*pkgmodels.Story        // "story_name" -> entity (for next_story resolution)
+	storylineMap map[string]*pkgmodels.Storyline   // "story:storyline" -> entity
+	enactmentMap map[string]*pkgmodels.Enactment   // "story:storyline:enactment" -> entity
+	sceneMap     map[string]*pkgmodels.Scene        // "story:storyline:enactment:scene" -> entity
+	funnelMap    map[string]*pkgmodels.Funnel       // "funnel_name" -> entity
+	stageMap     map[string]*pkgmodels.FunnelStage  // "funnel:route:stage" -> entity
+	productMap   map[string]*pkgmodels.Product      // "product_name" -> entity
+	offerMap     map[string]*pkgmodels.Offer        // "offer_name" -> entity
+	mediaMap     map[string]*pkgmodels.Media        // "media_name" -> entity
+	presetMap    map[string]*pkgmodels.PlayerPreset  // "preset_name" -> entity
 
 	// Pending asset generation jobs accumulated during compilation
-	pendingAssets []*sentanyl.Asset
+	pendingAssets []*pkgmodels.Asset
 
 	// Pending quiz entities accumulated during compilation
-	pendingQuizzes []*sentanyl.LMSQuiz
+	pendingQuizzes []*pkgmodels.LMSQuiz
 
 	// Retry metadata embedded in triggers
 	retryCounters map[string]int // keyed by enactment path
@@ -87,18 +87,18 @@ func NewCompiler(ast *ScriptAST, symbols *SymbolTable, subscriberID string, crea
 		symbols:      symbols,
 		subscriberID: subscriberID,
 		creatorID:    creatorID,
-		badges:       make(map[string]*sentanyl.Badge),
-		tags:         make(map[string]*sentanyl.Tag),
-		storyMap:     make(map[string]*sentanyl.Story),
-		storylineMap: make(map[string]*sentanyl.Storyline),
-		enactmentMap: make(map[string]*sentanyl.Enactment),
-		sceneMap:     make(map[string]*sentanyl.Scene),
-		funnelMap:    make(map[string]*sentanyl.Funnel),
-		stageMap:     make(map[string]*sentanyl.FunnelStage),
-		productMap:   make(map[string]*sentanyl.Product),
-		offerMap:     make(map[string]*sentanyl.Offer),
-		mediaMap:     make(map[string]*sentanyl.Media),
-		presetMap:    make(map[string]*sentanyl.PlayerPreset),
+		badges:       make(map[string]*pkgmodels.Badge),
+		tags:         make(map[string]*pkgmodels.Tag),
+		storyMap:     make(map[string]*pkgmodels.Story),
+		storylineMap: make(map[string]*pkgmodels.Storyline),
+		enactmentMap: make(map[string]*pkgmodels.Enactment),
+		sceneMap:     make(map[string]*pkgmodels.Scene),
+		funnelMap:    make(map[string]*pkgmodels.Funnel),
+		stageMap:     make(map[string]*pkgmodels.FunnelStage),
+		productMap:   make(map[string]*pkgmodels.Product),
+		offerMap:     make(map[string]*pkgmodels.Offer),
+		mediaMap:     make(map[string]*pkgmodels.Media),
+		presetMap:    make(map[string]*pkgmodels.PlayerPreset),
 		retryCounters: make(map[string]int),
 	}
 }
@@ -106,8 +106,8 @@ func NewCompiler(ast *ScriptAST, symbols *SymbolTable, subscriberID string, crea
 // Compile maps the AST into Sentanyl entities.
 func (c *Compiler) Compile() *CompileResult {
 	result := &CompileResult{
-		Badges: make(map[string]*sentanyl.Badge),
-		Tags:   make(map[string]*sentanyl.Tag),
+		Badges: make(map[string]*pkgmodels.Badge),
+		Tags:   make(map[string]*pkgmodels.Tag),
 	}
 
 	// Pre-create all badges and tags
@@ -133,8 +133,8 @@ func (c *Compiler) Compile() *CompileResult {
 		if storyNode.OnComplete != nil && storyNode.OnComplete.NextStory != "" {
 			if nextStory, ok := c.storyMap[storyNode.OnComplete.NextStory]; ok {
 				story.OnComplete.NextStory = nextStory
-				story.OnComplete.NextStoryId = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.StoryCollection,
+				story.OnComplete.NextStoryId = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.StoryCollection,
 					Id:             nextStory.Id,
 				}
 			} else {
@@ -145,8 +145,8 @@ func (c *Compiler) Compile() *CompileResult {
 		if storyNode.OnFail != nil && storyNode.OnFail.NextStory != "" {
 			if nextStory, ok := c.storyMap[storyNode.OnFail.NextStory]; ok {
 				story.OnFail.NextStory = nextStory
-				story.OnFail.NextStoryId = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.StoryCollection,
+				story.OnFail.NextStoryId = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.StoryCollection,
 					Id:             nextStory.Id,
 				}
 			} else {
@@ -240,7 +240,7 @@ func (c *Compiler) errorf(pos Pos, format string, args ...interface{}) {
 
 func (c *Compiler) precreateBadges() {
 	for name := range c.symbols.BadgeNames {
-		badge := &sentanyl.Badge{
+		badge := &pkgmodels.Badge{
 			Id:           bson.NewObjectId(),
 			PublicId:     generatePublicID("badge"),
 			SubscriberId: c.subscriberID,
@@ -254,7 +254,7 @@ func (c *Compiler) precreateBadges() {
 
 func (c *Compiler) precreateTags() {
 	for name := range c.symbols.TagNames {
-		tag := &sentanyl.Tag{
+		tag := &pkgmodels.Tag{
 			Id:           bson.NewObjectId(),
 			PublicId:     generatePublicID("tag"),
 			SubscriberId: c.subscriberID,
@@ -267,8 +267,8 @@ func (c *Compiler) precreateTags() {
 
 // ---------- Story Compilation ----------
 
-func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
-	story := &sentanyl.Story{
+func (c *Compiler) compileStory(node *StoryNode) *pkgmodels.Story {
+	story := &pkgmodels.Story{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("story"),
 		SubscriberId: c.subscriberID,
@@ -309,11 +309,11 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 	if node.StartTrigger != nil {
 		badge := c.badges[*node.StartTrigger]
 		if badge != nil {
-			story.StartTrigger = &sentanyl.RequiredBadge{
+			story.StartTrigger = &pkgmodels.RequiredBadge{
 				Id:   bson.NewObjectId(),
 				Name: badge.Name,
-				BadgeID: &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.BadgeCollection,
+				BadgeID: &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.BadgeCollection,
 					Id:             badge.Id,
 				},
 				Badge: badge,
@@ -325,11 +325,11 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 	if node.CompleteTrigger != nil {
 		badge := c.badges[*node.CompleteTrigger]
 		if badge != nil {
-			story.CompleteTrigger = &sentanyl.RequiredBadge{
+			story.CompleteTrigger = &pkgmodels.RequiredBadge{
 				Id:   bson.NewObjectId(),
 				Name: badge.Name,
-				BadgeID: &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.BadgeCollection,
+				BadgeID: &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.BadgeCollection,
 					Id:             badge.Id,
 				},
 				Badge: badge,
@@ -338,8 +338,8 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 	}
 
 	// Compile storylines
-	storylineIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.StorylineCollection,
+	storylineIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.StorylineCollection,
 	}
 	for i, slNode := range node.Storylines {
 		sl := c.compileStoryline(node, slNode, i+1)
@@ -363,8 +363,8 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 			nextKey := node.Name + ":" + slNode.OnComplete.NextStoryline
 			if nextSL, ok := c.storylineMap[nextKey]; ok {
 				sl.OnComplete.NextStoryline = nextSL
-				sl.OnComplete.NextStorylineId = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.StorylineCollection,
+				sl.OnComplete.NextStorylineId = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.StorylineCollection,
 					Id:             nextSL.Id,
 				}
 			}
@@ -377,8 +377,8 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 					nextKey := node.Name + ":" + crNode.NextStoryline
 					if nextSL, ok := c.storylineMap[nextKey]; ok {
 						cr.NextStoryline = nextSL
-						cr.NextStorylineId = &sentanyl.BsonCollectionId{
-							CollectionName: sentanyl.StorylineCollection,
+						cr.NextStorylineId = &pkgmodels.BsonCollectionId{
+							CollectionName: pkgmodels.StorylineCollection,
 							Id:             nextSL.Id,
 						}
 					}
@@ -390,8 +390,8 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 			nextKey := node.Name + ":" + slNode.OnFail.NextStoryline
 			if nextSL, ok := c.storylineMap[nextKey]; ok {
 				sl.OnFail.NextStoryline = nextSL
-				sl.OnFail.NextStorylineId = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.StorylineCollection,
+				sl.OnFail.NextStorylineId = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.StorylineCollection,
 					Id:             nextSL.Id,
 				}
 			}
@@ -404,8 +404,8 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 					nextKey := node.Name + ":" + crNode.NextStoryline
 					if nextSL, ok := c.storylineMap[nextKey]; ok {
 						cr.NextStoryline = nextSL
-						cr.NextStorylineId = &sentanyl.BsonCollectionId{
-							CollectionName: sentanyl.StorylineCollection,
+						cr.NextStorylineId = &pkgmodels.BsonCollectionId{
+							CollectionName: pkgmodels.StorylineCollection,
 							Id:             nextSL.Id,
 						}
 					}
@@ -419,8 +419,8 @@ func (c *Compiler) compileStory(node *StoryNode) *sentanyl.Story {
 
 // ---------- Storyline Compilation ----------
 
-func (c *Compiler) compileStoryline(storyNode *StoryNode, node *StorylineNode, defaultOrder int) *sentanyl.Storyline {
-	sl := &sentanyl.Storyline{
+func (c *Compiler) compileStoryline(storyNode *StoryNode, node *StorylineNode, defaultOrder int) *pkgmodels.Storyline {
+	sl := &pkgmodels.Storyline{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("storyline"),
 		SubscriberId: c.subscriberID,
@@ -465,8 +465,8 @@ func (c *Compiler) compileStoryline(storyNode *StoryNode, node *StorylineNode, d
 	}
 
 	// Compile enactments
-	actIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.EnactmentCollection,
+	actIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.EnactmentCollection,
 	}
 	for i, enNode := range node.Enactments {
 		en := c.compileEnactment(storyNode, node, enNode, i+1)
@@ -503,7 +503,7 @@ func (c *Compiler) compileStoryline(storyNode *StoryNode, node *StorylineNode, d
 // Action. During initial compilation forward references store the target name
 // in ActionName as "jump_to_enactment:<name>". This pass replaces that with
 // the actual NextEnactment pointer now that all enactments are compiled.
-func (c *Compiler) resolveEnactmentRef(storyName, slName string, action *sentanyl.Action) {
+func (c *Compiler) resolveEnactmentRef(storyName, slName string, action *pkgmodels.Action) {
 	const prefix = "jump_to_enactment:"
 	if !strings.HasPrefix(action.ActionName, prefix) {
 		return
@@ -516,8 +516,8 @@ func (c *Compiler) resolveEnactmentRef(storyName, slName string, action *sentany
 		// setting the pointer would cause duplicate inserts when multiple
 		// triggers reference the same target enactment.  The runtime
 		// (ExecuteAction) already hydrates NextEnactment from NextEnactmentId.
-		action.NextEnactmentId = &sentanyl.BsonCollectionId{
-			CollectionName: sentanyl.EnactmentCollection,
+		action.NextEnactmentId = &pkgmodels.BsonCollectionId{
+			CollectionName: pkgmodels.EnactmentCollection,
 			Id:             targetEn.Id,
 		}
 		action.ActionName = ""
@@ -526,8 +526,8 @@ func (c *Compiler) resolveEnactmentRef(storyName, slName string, action *sentany
 
 // ---------- Enactment Compilation ----------
 
-func (c *Compiler) compileEnactment(storyNode *StoryNode, slNode *StorylineNode, node *EnactmentNode, defaultOrder int) *sentanyl.Enactment {
-	en := &sentanyl.Enactment{
+func (c *Compiler) compileEnactment(storyNode *StoryNode, slNode *StorylineNode, node *EnactmentNode, defaultOrder int) *pkgmodels.Enactment {
+	en := &pkgmodels.Enactment{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("enactment"),
 		SubscriberId: c.subscriberID,
@@ -554,16 +554,16 @@ func (c *Compiler) compileEnactment(storyNode *StoryNode, slNode *StorylineNode,
 		// Single-scene enactment → uses SendScene
 		scene := c.compileScene(storyNode, slNode, node, node.Scenes[0])
 		en.SendScene = scene
-		en.SendSceneId = &sentanyl.BsonCollectionId{
-			CollectionName: sentanyl.SceneCollection,
+		en.SendSceneId = &pkgmodels.BsonCollectionId{
+			CollectionName: pkgmodels.SceneCollection,
 			Id:             scene.Id,
 		}
 		scKey := storyNode.Name + ":" + slNode.Name + ":" + node.Name + ":" + node.Scenes[0].Name
 		c.sceneMap[scKey] = scene
 	} else if len(node.Scenes) > 1 {
 		// Multi-scene enactment → uses SendScenes
-		sceneIds := &sentanyl.BsonCollectionIds{
-			CollectionName: sentanyl.SceneCollection,
+		sceneIds := &pkgmodels.BsonCollectionIds{
+			CollectionName: pkgmodels.SceneCollection,
 		}
 		for _, scNode := range node.Scenes {
 			scene := c.compileScene(storyNode, slNode, node, scNode)
@@ -575,16 +575,16 @@ func (c *Compiler) compileEnactment(storyNode *StoryNode, slNode *StorylineNode,
 		en.SendScenesIds = sceneIds
 		// Also set first scene as SendScene for backward compat
 		en.SendScene = en.SendScenes[0]
-		en.SendSceneId = &sentanyl.BsonCollectionId{
-			CollectionName: sentanyl.SceneCollection,
+		en.SendSceneId = &pkgmodels.BsonCollectionId{
+			CollectionName: pkgmodels.SceneCollection,
 			Id:             en.SendScenes[0].Id,
 		}
 	}
 
 	// Compile triggers
-	en.OnEvent = make(map[string][]*sentanyl.Trigger)
-	triggerIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.TriggerCollection,
+	en.OnEvent = make(map[string][]*pkgmodels.Trigger)
+	triggerIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.TriggerCollection,
 	}
 	for _, trNode := range node.Triggers {
 		triggers := c.compileTrigger(storyNode, slNode, node, trNode)
@@ -601,8 +601,8 @@ func (c *Compiler) compileEnactment(storyNode *StoryNode, slNode *StorylineNode,
 
 // ---------- Scene Compilation ----------
 
-func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enNode *EnactmentNode, node *SceneNode) *sentanyl.Scene {
-	scene := &sentanyl.Scene{
+func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enNode *EnactmentNode, node *SceneNode) *pkgmodels.Scene {
+	scene := &pkgmodels.Scene{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("scene"),
 		SubscriberId: c.subscriberID,
@@ -611,14 +611,14 @@ func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enN
 	}
 
 	// Message
-	msg := &sentanyl.Message{
+	msg := &pkgmodels.Message{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("message"),
 		SubscriberId: c.subscriberID,
 		CreatorId:    c.creatorID,
 	}
 
-	content := &sentanyl.MessageContent{
+	content := &pkgmodels.MessageContent{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("content"),
 		SubscriberId: c.subscriberID,
@@ -638,7 +638,7 @@ func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enN
 	// TemplateName — create a Template entity with the given name so that the
 	// platform can look it up during email compilation.
 	if node.TemplateName != "" {
-		tmpl := &sentanyl.Template{
+		tmpl := &pkgmodels.Template{
 			Id:           bson.NewObjectId(),
 			PublicId:     generatePublicID("template"),
 			SubscriberId: c.subscriberID,
@@ -646,23 +646,23 @@ func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enN
 			Name:         node.TemplateName,
 		}
 		content.Template = tmpl
-		content.TemplateId = &sentanyl.BsonCollectionId{
-			CollectionName: sentanyl.TemplateCollection,
+		content.TemplateId = &pkgmodels.BsonCollectionId{
+			CollectionName: pkgmodels.TemplateCollection,
 			Id:             tmpl.Id,
 		}
 	}
 
 	msg.Content = content
 	scene.Message = msg
-	scene.MessageId = &sentanyl.BsonCollectionId{
-		CollectionName: sentanyl.MessageCollection,
+	scene.MessageId = &pkgmodels.BsonCollectionId{
+		CollectionName: pkgmodels.MessageCollection,
 		Id:             msg.Id,
 	}
 
 	// Tags
 	if len(node.Tags) > 0 {
-		tagIds := &sentanyl.BsonCollectionIds{
-			CollectionName: sentanyl.TagCollection,
+		tagIds := &pkgmodels.BsonCollectionIds{
+			CollectionName: pkgmodels.TagCollection,
 		}
 		for _, tagName := range node.Tags {
 			if tag, ok := c.tags[tagName]; ok {
@@ -678,14 +678,14 @@ func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enN
 
 // ---------- Trigger Compilation ----------
 
-func (c *Compiler) compileTrigger(storyNode *StoryNode, slNode *StorylineNode, enNode *EnactmentNode, node *TriggerNode) []*sentanyl.Trigger {
-	triggers := []*sentanyl.Trigger{}
+func (c *Compiler) compileTrigger(storyNode *StoryNode, slNode *StorylineNode, enNode *EnactmentNode, node *TriggerNode) []*pkgmodels.Trigger {
+	triggers := []*pkgmodels.Trigger{}
 
 	// Map trigger type to existing constants
 	triggerType, userAction, userActionValue := c.mapTriggerType(node)
 
 	// Main trigger with primary actions
-	mainTrigger := &sentanyl.Trigger{
+	mainTrigger := &pkgmodels.Trigger{
 		Id:              bson.NewObjectId(),
 		PublicId:        generatePublicID("trigger"),
 		SubscriberId:    c.subscriberID,
@@ -699,12 +699,12 @@ func (c *Compiler) compileTrigger(storyNode *StoryNode, slNode *StorylineNode, e
 
 	// Priority
 	if node.Priority != nil {
-		mainTrigger.Priority = sentanyl.TriggerPriority(*node.Priority)
+		mainTrigger.Priority = pkgmodels.TriggerPriority(*node.Priority)
 	}
 
 	// Persist scope
 	if node.PersistScope != "" {
-		mainTrigger.PersistScope = sentanyl.TriggerScope(node.PersistScope)
+		mainTrigger.PersistScope = pkgmodels.TriggerScope(node.PersistScope)
 	}
 
 	// Required badges on trigger
@@ -729,8 +729,8 @@ func (c *Compiler) compileTrigger(storyNode *StoryNode, slNode *StorylineNode, e
 	if len(node.Actions) > 0 {
 		action := c.compileActions(storyNode, slNode, enNode, node.Actions)
 		mainTrigger.DoAction = action
-		mainTrigger.DoActionId = &sentanyl.BsonCollectionId{
-			CollectionName: sentanyl.ActionCollection,
+		mainTrigger.DoActionId = &pkgmodels.BsonCollectionId{
+			CollectionName: pkgmodels.ActionCollection,
 			Id:             action.Id,
 		}
 
@@ -771,27 +771,27 @@ func (c *Compiler) compileTrigger(storyNode *StoryNode, slNode *StorylineNode, e
 	}
 
 	if len(elseActions) > 0 {
-		elseTrigger := &sentanyl.Trigger{
+		elseTrigger := &pkgmodels.Trigger{
 			Id:              bson.NewObjectId(),
 			PublicId:        generatePublicID("trigger"),
 			SubscriberId:    c.subscriberID,
 			CreatorId:       c.creatorID,
-			TriggerType:     sentanyl.Else,
+			TriggerType:     pkgmodels.Else,
 			UserAction:      userAction,
 			UserActionValue: userActionValue,
 		}
 
 		if node.Priority != nil {
 			// Else gets lower priority
-			elseTrigger.Priority = sentanyl.TriggerPriority(*node.Priority + 1)
+			elseTrigger.Priority = pkgmodels.TriggerPriority(*node.Priority + 1)
 		} else {
-			elseTrigger.Priority = sentanyl.SecondPriority
+			elseTrigger.Priority = pkgmodels.SecondPriority
 		}
 
 		action := c.compileActions(storyNode, slNode, enNode, elseActions)
 		elseTrigger.DoAction = action
-		elseTrigger.DoActionId = &sentanyl.BsonCollectionId{
-			CollectionName: sentanyl.ActionCollection,
+		elseTrigger.DoActionId = &pkgmodels.BsonCollectionId{
+			CollectionName: pkgmodels.ActionCollection,
 			Id:             action.Id,
 		}
 
@@ -814,76 +814,76 @@ func (c *Compiler) compileTrigger(storyNode *StoryNode, slNode *StorylineNode, e
 func (c *Compiler) mapTriggerType(node *TriggerNode) (string, string, string) {
 	switch node.TriggerType {
 	case "click":
-		return sentanyl.OnClick, sentanyl.OnClick, node.UserActionValue
+		return pkgmodels.OnClick, pkgmodels.OnClick, node.UserActionValue
 	case "not_click":
-		return sentanyl.OnNotClick, sentanyl.OnNotClick, node.UserActionValue
+		return pkgmodels.OnNotClick, pkgmodels.OnNotClick, node.UserActionValue
 	case "open":
-		return sentanyl.OnOpen, sentanyl.OnOpen, ""
+		return pkgmodels.OnOpen, pkgmodels.OnOpen, ""
 	case "not_open":
-		return sentanyl.OnNotOpen, sentanyl.OnNotOpen, ""
+		return pkgmodels.OnNotOpen, pkgmodels.OnNotOpen, ""
 	case "sent":
-		return sentanyl.OnSent, "", ""
+		return pkgmodels.OnSent, "", ""
 	case "webhook":
-		return sentanyl.OnWebhook, "", node.UserActionValue
+		return pkgmodels.OnWebhook, "", node.UserActionValue
 	case "nothing":
-		return sentanyl.OnNothing, "", ""
+		return pkgmodels.OnNothing, "", ""
 	case "else":
-		return sentanyl.Else, "", ""
+		return pkgmodels.Else, "", ""
 	case "bounce":
-		return sentanyl.OnBounce, "", ""
+		return pkgmodels.OnBounce, "", ""
 	case "spam":
-		return sentanyl.OnSpam, "", ""
+		return pkgmodels.OnSpam, "", ""
 	case "unsubscribe":
-		return sentanyl.OnUnsubscribe, "", ""
+		return pkgmodels.OnUnsubscribe, "", ""
 	case "failure":
-		return sentanyl.OnFailure, "", ""
+		return pkgmodels.OnFailure, "", ""
 	case "email_validated":
-		return sentanyl.OnEmailAddressValidated, "", ""
+		return pkgmodels.OnEmailAddressValidated, "", ""
 	case "user_has_tag":
-		return sentanyl.UserHasTag, "", node.UserActionValue
+		return pkgmodels.UserHasTag, "", node.UserActionValue
 	case "badge":
-		return sentanyl.OnBadge, "", node.UserActionValue
+		return pkgmodels.OnBadge, "", node.UserActionValue
 	case "submit":
-		return sentanyl.OnSubmit, sentanyl.OnSubmit, node.UserActionValue
+		return pkgmodels.OnSubmit, pkgmodels.OnSubmit, node.UserActionValue
 	case "abandon":
-		return sentanyl.OnAbandon, sentanyl.OnAbandon, ""
+		return pkgmodels.OnAbandon, pkgmodels.OnAbandon, ""
 	case "purchase":
-		return sentanyl.OnPurchase, sentanyl.OnPurchase, node.UserActionValue
+		return pkgmodels.OnPurchase, pkgmodels.OnPurchase, node.UserActionValue
 	case "watch":
-		return sentanyl.OnWatch, sentanyl.OnWatch, node.UserActionValue
+		return pkgmodels.OnWatch, pkgmodels.OnWatch, node.UserActionValue
 	case "play":
-		return sentanyl.OnPlay, sentanyl.OnPlay, node.UserActionValue
+		return pkgmodels.OnPlay, pkgmodels.OnPlay, node.UserActionValue
 	case "pause":
-		return sentanyl.OnPause, sentanyl.OnPause, node.UserActionValue
+		return pkgmodels.OnPause, pkgmodels.OnPause, node.UserActionValue
 	case "progress":
-		return sentanyl.OnProgress, sentanyl.OnProgress, node.UserActionValue
+		return pkgmodels.OnProgress, pkgmodels.OnProgress, node.UserActionValue
 	case "complete":
-		return sentanyl.OnComplete, sentanyl.OnComplete, node.UserActionValue
+		return pkgmodels.OnComplete, pkgmodels.OnComplete, node.UserActionValue
 	case "rewatch":
-		return sentanyl.OnRewatch, sentanyl.OnRewatch, node.UserActionValue
+		return pkgmodels.OnRewatch, pkgmodels.OnRewatch, node.UserActionValue
 	case "cta_click":
-		return sentanyl.OnCTAClick, sentanyl.OnCTAClick, node.UserActionValue
+		return pkgmodels.OnCTAClick, pkgmodels.OnCTAClick, node.UserActionValue
 	case "turnstile_submit":
-		return sentanyl.OnTurnstileSubmit, sentanyl.OnTurnstileSubmit, node.UserActionValue
+		return pkgmodels.OnTurnstileSubmit, pkgmodels.OnTurnstileSubmit, node.UserActionValue
 	case "chapter_click":
-		return sentanyl.OnChapterClick, sentanyl.OnChapterClick, node.UserActionValue
+		return pkgmodels.OnChapterClick, pkgmodels.OnChapterClick, node.UserActionValue
 	default:
 		return node.TriggerType, "", node.UserActionValue
 	}
 }
 
-func (c *Compiler) applyConditionToTrigger(cond *ConditionNode, trigger *sentanyl.Trigger) {
+func (c *Compiler) applyConditionToTrigger(cond *ConditionNode, trigger *pkgmodels.Trigger) {
 	if cond == nil {
 		return
 	}
 	switch cond.ConditionType {
 	case "has_badge":
 		if badge, ok := c.badges[cond.Value]; ok {
-			rb := &sentanyl.RequiredBadge{
+			rb := &pkgmodels.RequiredBadge{
 				Id:   bson.NewObjectId(),
 				Name: badge.Name,
-				BadgeID: &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.BadgeCollection,
+				BadgeID: &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.BadgeCollection,
 					Id:             badge.Id,
 				},
 				Badge: badge,
@@ -892,11 +892,11 @@ func (c *Compiler) applyConditionToTrigger(cond *ConditionNode, trigger *sentany
 		}
 	case "not_has_badge":
 		if badge, ok := c.badges[cond.Value]; ok {
-			rb := &sentanyl.RequiredBadge{
+			rb := &pkgmodels.RequiredBadge{
 				Id:   bson.NewObjectId(),
 				Name: badge.Name,
-				BadgeID: &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.BadgeCollection,
+				BadgeID: &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.BadgeCollection,
 					Id:             badge.Id,
 				},
 				Badge: badge,
@@ -937,7 +937,7 @@ func (c *Compiler) applyConditionToTrigger(cond *ConditionNode, trigger *sentany
 // ---------- Action Compilation ----------
 
 // addActionName sets action.ActionName if empty, otherwise appends to ExtraActions.
-func addActionName(action *sentanyl.Action, name string) {
+func addActionName(action *pkgmodels.Action, name string) {
 	if action.ActionName == "" {
 		action.ActionName = name
 	} else {
@@ -945,14 +945,14 @@ func addActionName(action *sentanyl.Action, name string) {
 	}
 }
 
-func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, enNode *EnactmentNode, actions []*ActionNode) *sentanyl.Action {
+func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, enNode *EnactmentNode, actions []*ActionNode) *pkgmodels.Action {
 	if len(actions) == 0 {
 		return nil
 	}
 
 	// Build a single Action entity that captures the combined behavior.
 	// The existing model uses a single Action per trigger, so we merge.
-	action := &sentanyl.Action{
+	action := &pkgmodels.Action{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("action"),
 		SubscriberId: c.subscriberID,
@@ -970,8 +970,8 @@ func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, e
 			enKey := storyNode.Name + ":" + slNode.Name + ":" + an.Target
 			if targetEn, ok := c.enactmentMap[enKey]; ok {
 				action.NextEnactment = targetEn
-				action.NextEnactmentId = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.EnactmentCollection,
+				action.NextEnactmentId = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.EnactmentCollection,
 					Id:             targetEn.Id,
 				}
 			} else {
@@ -985,8 +985,8 @@ func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, e
 				// Action.ReadyMongoStore() recursively persists NextEnactment, so
 				// setting the pointer causes duplicate inserts of the target
 				// enactment's scenes/messages/content.
-				action.NextEnactmentId = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.EnactmentCollection,
+				action.NextEnactmentId = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.EnactmentCollection,
 					Id:             targetEn.Id,
 				}
 			}
@@ -1027,8 +1027,8 @@ func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, e
 			if an.BadgeTransaction != nil {
 				bt := c.compileBadgeTransaction(an.BadgeTransaction)
 				action.BadgeTransaction = bt
-				action.BadgeTransactionIds = &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.BadgeTransactionCollection,
+				action.BadgeTransactionIds = &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.BadgeTransactionCollection,
 					Id:             bt.Id,
 				}
 			}
@@ -1039,15 +1039,15 @@ func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, e
 		case "send_immediate":
 			action.SendImmediate = an.SendImmediate
 		case "jump_to_stage":
-			addActionName(action, sentanyl.ActionJumpToStage+":"+an.Target)
+			addActionName(action, pkgmodels.ActionJumpToStage+":"+an.Target)
 		case "start_story":
-			addActionName(action, sentanyl.ActionStartStory+":"+an.Target)
+			addActionName(action, pkgmodels.ActionStartStory+":"+an.Target)
 		case "send_email":
-			addActionName(action, sentanyl.ActionSendEmail+":"+an.Target)
+			addActionName(action, pkgmodels.ActionSendEmail+":"+an.Target)
 		case "redirect":
-			addActionName(action, sentanyl.ActionRedirect+":"+an.Target)
+			addActionName(action, pkgmodels.ActionRedirect+":"+an.Target)
 		case "provide_download":
-			addActionName(action, sentanyl.ActionProvideDownload+":"+an.Target)
+			addActionName(action, pkgmodels.ActionProvideDownload+":"+an.Target)
 		}
 
 		// Apply send_immediate if set
@@ -1064,8 +1064,8 @@ func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, e
 		if an.BadgeTransaction != nil && action.BadgeTransaction == nil {
 			bt := c.compileBadgeTransaction(an.BadgeTransaction)
 			action.BadgeTransaction = bt
-			action.BadgeTransactionIds = &sentanyl.BsonCollectionId{
-				CollectionName: sentanyl.BadgeTransactionCollection,
+			action.BadgeTransactionIds = &pkgmodels.BsonCollectionId{
+				CollectionName: pkgmodels.BadgeTransactionCollection,
 				Id:             bt.Id,
 			}
 		}
@@ -1074,13 +1074,13 @@ func (c *Compiler) compileActions(storyNode *StoryNode, slNode *StorylineNode, e
 	return action
 }
 
-func (c *Compiler) compileActionWhen(dur *DurationNode) *sentanyl.ActionWhen {
+func (c *Compiler) compileActionWhen(dur *DurationNode) *pkgmodels.ActionWhen {
 	if dur == nil {
 		return nil
 	}
-	return &sentanyl.ActionWhen{
-		WaitType: sentanyl.ActionTaken,
-		WaitUntil: &sentanyl.Timeframe{
+	return &pkgmodels.ActionWhen{
+		WaitType: pkgmodels.ActionTaken,
+		WaitUntil: &pkgmodels.Timeframe{
 			Amount:   dur.Amount,
 			TimeUnit: c.mapDurationUnit(dur.Unit),
 		},
@@ -1090,32 +1090,32 @@ func (c *Compiler) compileActionWhen(dur *DurationNode) *sentanyl.ActionWhen {
 func (c *Compiler) mapDurationUnit(unit string) string {
 	switch unit {
 	case "d", "days":
-		return sentanyl.Days
+		return pkgmodels.Days
 	case "h", "hours":
-		return sentanyl.Hours
+		return pkgmodels.Hours
 	case "m", "minutes":
-		return sentanyl.Minutes
+		return pkgmodels.Minutes
 	case "s", "seconds":
-		return sentanyl.Seconds
+		return pkgmodels.Seconds
 	default:
-		return sentanyl.Days
+		return pkgmodels.Days
 	}
 }
 
 // ---------- Badge / Required Badge Compilation ----------
 
-func (c *Compiler) compileBadgeTransaction(node *BadgeTransactionNode) *sentanyl.BadgeTransaction {
+func (c *Compiler) compileBadgeTransaction(node *BadgeTransactionNode) *pkgmodels.BadgeTransaction {
 	if node == nil {
 		return nil
 	}
 
-	bt := &sentanyl.BadgeTransaction{
+	bt := &pkgmodels.BadgeTransaction{
 		Id: bson.NewObjectId(),
 	}
 
 	if len(node.GiveBadges) > 0 {
-		giveIds := &sentanyl.BsonCollectionIds{
-			CollectionName: sentanyl.BadgeCollection,
+		giveIds := &pkgmodels.BsonCollectionIds{
+			CollectionName: pkgmodels.BadgeCollection,
 		}
 		for _, name := range node.GiveBadges {
 			if badge, ok := c.badges[name]; ok {
@@ -1127,8 +1127,8 @@ func (c *Compiler) compileBadgeTransaction(node *BadgeTransactionNode) *sentanyl
 	}
 
 	if len(node.RemoveBadges) > 0 {
-		removeIds := &sentanyl.BsonCollectionIds{
-			CollectionName: sentanyl.BadgeCollection,
+		removeIds := &pkgmodels.BsonCollectionIds{
+			CollectionName: pkgmodels.BadgeCollection,
 		}
 		for _, name := range node.RemoveBadges {
 			if badge, ok := c.badges[name]; ok {
@@ -1142,15 +1142,15 @@ func (c *Compiler) compileBadgeTransaction(node *BadgeTransactionNode) *sentanyl
 	return bt
 }
 
-func (c *Compiler) compileRequiredBadges(badgeNames []string) []*sentanyl.RequiredBadge {
-	var result []*sentanyl.RequiredBadge
+func (c *Compiler) compileRequiredBadges(badgeNames []string) []*pkgmodels.RequiredBadge {
+	var result []*pkgmodels.RequiredBadge
 	for _, name := range badgeNames {
 		if badge, ok := c.badges[name]; ok {
-			result = append(result, &sentanyl.RequiredBadge{
+			result = append(result, &pkgmodels.RequiredBadge{
 				Id:   bson.NewObjectId(),
 				Name: badge.Name,
-				BadgeID: &sentanyl.BsonCollectionId{
-					CollectionName: sentanyl.BadgeCollection,
+				BadgeID: &pkgmodels.BsonCollectionId{
+					CollectionName: pkgmodels.BadgeCollection,
 					Id:             badge.Id,
 				},
 				Badge: badge,
@@ -1160,8 +1160,8 @@ func (c *Compiler) compileRequiredBadges(badgeNames []string) []*sentanyl.Requir
 	return result
 }
 
-func (c *Compiler) compileConditionalRoute(storyNode *StoryNode, node *ConditionalRouteNode) *sentanyl.ConditionalRoute {
-	cr := &sentanyl.ConditionalRoute{}
+func (c *Compiler) compileConditionalRoute(storyNode *StoryNode, node *ConditionalRouteNode) *pkgmodels.ConditionalRoute {
+	cr := &pkgmodels.ConditionalRoute{}
 	if node.RequiredBadges != nil {
 		cr.RequiredBadges.MustHave = c.compileRequiredBadges(node.RequiredBadges.MustHave)
 		cr.RequiredBadges.MustNotHave = c.compileRequiredBadges(node.RequiredBadges.MustNotHave)
@@ -1175,8 +1175,8 @@ func (c *Compiler) compileConditionalRoute(storyNode *StoryNode, node *Condition
 
 // ---------- Funnel Compilation ----------
 
-func (c *Compiler) compileFunnel(node *FunnelNode) *sentanyl.Funnel {
-	funnel := &sentanyl.Funnel{
+func (c *Compiler) compileFunnel(node *FunnelNode) *pkgmodels.Funnel {
+	funnel := &pkgmodels.Funnel{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("funnel"),
 		SubscriberId: c.subscriberID,
@@ -1189,8 +1189,8 @@ func (c *Compiler) compileFunnel(node *FunnelNode) *sentanyl.Funnel {
 		funnel.AIContext = c.compileAIContext(node.AIContext)
 	}
 
-	routeIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.FunnelRouteCollection,
+	routeIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.FunnelRouteCollection,
 	}
 	for i, rNode := range node.Routes {
 		route := c.compileRoute(node, rNode, i+1)
@@ -1206,8 +1206,8 @@ func (c *Compiler) compileFunnel(node *FunnelNode) *sentanyl.Funnel {
 	return funnel
 }
 
-func (c *Compiler) compileRoute(funnelNode *FunnelNode, node *RouteNode, defaultOrder int) *sentanyl.FunnelRoute {
-	route := &sentanyl.FunnelRoute{
+func (c *Compiler) compileRoute(funnelNode *FunnelNode, node *RouteNode, defaultOrder int) *pkgmodels.FunnelRoute {
+	route := &pkgmodels.FunnelRoute{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("route"),
 		SubscriberId: c.subscriberID,
@@ -1225,8 +1225,8 @@ func (c *Compiler) compileRoute(funnelNode *FunnelNode, node *RouteNode, default
 		route.RequiredUserBadges.MustNotHave = c.compileRequiredBadges(node.RequiredBadges.MustNotHave)
 	}
 
-	stageIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.FunnelStageCollection,
+	stageIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.FunnelStageCollection,
 	}
 	for i, sNode := range node.Stages {
 		stage := c.compileStage(funnelNode, node, sNode, i+1)
@@ -1244,8 +1244,8 @@ func (c *Compiler) compileRoute(funnelNode *FunnelNode, node *RouteNode, default
 	return route
 }
 
-func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, node *StageNode, defaultOrder int) *sentanyl.FunnelStage {
-	stage := &sentanyl.FunnelStage{
+func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, node *StageNode, defaultOrder int) *pkgmodels.FunnelStage {
+	stage := &pkgmodels.FunnelStage{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("stage"),
 		SubscriberId: c.subscriberID,
@@ -1260,8 +1260,8 @@ func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, no
 	}
 
 	// Compile pages
-	pageIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.FunnelPageCollection,
+	pageIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.FunnelPageCollection,
 	}
 	for _, pgNode := range node.Pages {
 		page := c.compilePage(pgNode)
@@ -1274,8 +1274,8 @@ func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, no
 	stage.PageIds = pageIds
 
 	// Compile triggers
-	triggerIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.TriggerCollection,
+	triggerIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.TriggerCollection,
 	}
 	for _, trNode := range node.Triggers {
 		triggers := c.compileTrigger(nil, nil, nil, trNode)
@@ -1288,7 +1288,7 @@ func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, no
 
 	// PDF config
 	if node.PDFConfig != nil {
-		stage.PDFConfig = &sentanyl.PDFConfig{
+		stage.PDFConfig = &pkgmodels.PDFConfig{
 			AIGenerated: node.PDFConfig.AIGenerated,
 		}
 		if node.PDFConfig.AIContext != nil {
@@ -1307,13 +1307,13 @@ func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, no
 			theme = "minimal"
 		}
 		fileName := assetType + "-" + stage.PublicId + ".pdf"
-		asset := &sentanyl.Asset{
+		asset := &pkgmodels.Asset{
 			Id:           bson.NewObjectId(),
 			PublicId:     generatePublicID("asset"),
 			SubscriberId: c.subscriberID,
 			FileName:     fileName,
 			FileType:     "application/pdf",
-			GenConfig: &sentanyl.AssetGenConfig{
+			GenConfig: &pkgmodels.AssetGenConfig{
 				AssetType:   assetType,
 				References:  lmNode.References,
 				Instruction: lmNode.Instruction,
@@ -1337,13 +1337,13 @@ func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, no
 				theme = "minimal"
 			}
 			fileName := assetType + "-" + stage.PublicId + ".pdf"
-			asset := &sentanyl.Asset{
+			asset := &pkgmodels.Asset{
 				Id:           bson.NewObjectId(),
 				PublicId:     generatePublicID("asset"),
 				SubscriberId: c.subscriberID,
 				FileName:     fileName,
 				FileType:     "application/pdf",
-				GenConfig: &sentanyl.AssetGenConfig{
+				GenConfig: &pkgmodels.AssetGenConfig{
 					AssetType:   assetType,
 					References:  lmNode.References,
 					Instruction: lmNode.Instruction,
@@ -1359,8 +1359,8 @@ func (c *Compiler) compileStage(funnelNode *FunnelNode, routeNode *RouteNode, no
 	return stage
 }
 
-func (c *Compiler) compilePage(node *PageNode) *sentanyl.FunnelPage {
-	page := &sentanyl.FunnelPage{
+func (c *Compiler) compilePage(node *PageNode) *pkgmodels.FunnelPage {
+	page := &pkgmodels.FunnelPage{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("page"),
 		SubscriberId: c.subscriberID,
@@ -1373,8 +1373,8 @@ func (c *Compiler) compilePage(node *PageNode) *sentanyl.FunnelPage {
 	}
 
 	// Compile blocks
-	blockIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.PageBlockCollection,
+	blockIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.PageBlockCollection,
 	}
 	for _, bNode := range node.Blocks {
 		block := c.compileBlock(bNode)
@@ -1387,8 +1387,8 @@ func (c *Compiler) compilePage(node *PageNode) *sentanyl.FunnelPage {
 	page.BlockIds = blockIds
 
 	// Compile forms
-	formIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.PageFormCollection,
+	formIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.PageFormCollection,
 	}
 	for _, fNode := range node.Forms {
 		form := c.compileForm(fNode)
@@ -1403,8 +1403,8 @@ func (c *Compiler) compilePage(node *PageNode) *sentanyl.FunnelPage {
 	return page
 }
 
-func (c *Compiler) compileBlock(node *BlockNode) *sentanyl.PageBlock {
-	block := &sentanyl.PageBlock{
+func (c *Compiler) compileBlock(node *BlockNode) *pkgmodels.PageBlock {
+	block := &pkgmodels.PageBlock{
 		Id:             bson.NewObjectId(),
 		PublicId:       generatePublicID("block"),
 		SubscriberId:   c.subscriberID,
@@ -1426,8 +1426,8 @@ func (c *Compiler) compileBlock(node *BlockNode) *sentanyl.PageBlock {
 	return block
 }
 
-func (c *Compiler) compileForm(node *FormNode) *sentanyl.PageForm {
-	form := &sentanyl.PageForm{
+func (c *Compiler) compileForm(node *FormNode) *pkgmodels.PageForm {
+	form := &pkgmodels.PageForm{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("form"),
 		SubscriberId: c.subscriberID,
@@ -1438,7 +1438,7 @@ func (c *Compiler) compileForm(node *FormNode) *sentanyl.PageForm {
 	}
 
 	for _, fNode := range node.Fields {
-		field := &sentanyl.FormField{
+		field := &pkgmodels.FormField{
 			FieldName:   fNode.FieldName,
 			FieldType:   fNode.FieldType,
 			Required:    fNode.Required,
@@ -1449,7 +1449,7 @@ func (c *Compiler) compileForm(node *FormNode) *sentanyl.PageForm {
 
 	// Compile order bumps
 	for _, obNode := range node.OrderBumps {
-		ob := &sentanyl.OrderBump{
+		ob := &pkgmodels.OrderBump{
 			Text: obNode.Text,
 		}
 		// Resolve offer by name
@@ -1462,8 +1462,8 @@ func (c *Compiler) compileForm(node *FormNode) *sentanyl.PageForm {
 	return form
 }
 
-func (c *Compiler) compileContentGen(node *ContentGenNode) *sentanyl.ContentGenConfig {
-	return &sentanyl.ContentGenConfig{
+func (c *Compiler) compileContentGen(node *ContentGenNode) *pkgmodels.ContentGenConfig {
+	return &pkgmodels.ContentGenConfig{
 		Length:       node.Length,
 		ContextURLs:  node.ContextURLs,
 		PromptAppend: node.PromptAppend,
@@ -1471,8 +1471,8 @@ func (c *Compiler) compileContentGen(node *ContentGenNode) *sentanyl.ContentGenC
 	}
 }
 
-func (c *Compiler) compileAIContext(node *AIContextNode) *sentanyl.AIContextBlock {
-	return &sentanyl.AIContextBlock{
+func (c *Compiler) compileAIContext(node *AIContextNode) *pkgmodels.AIContextBlock {
+	return &pkgmodels.AIContextBlock{
 		ContextURLs:  node.ContextURLs,
 		ContextRefs:  node.ContextRefs,
 		ContextMode:  node.Mode,
@@ -1517,8 +1517,8 @@ func ResetIDCounter() {
 // ---------- Site Compilation ----------
 
 // compileSite compiles a SiteNode into a Site entity.
-func (c *Compiler) compileSite(node *SiteNode) *sentanyl.Site {
-	site := &sentanyl.Site{
+func (c *Compiler) compileSite(node *SiteNode) *pkgmodels.Site {
+	site := &pkgmodels.Site{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("site"),
 		SubscriberId: c.subscriberID,
@@ -1529,7 +1529,7 @@ func (c *Compiler) compileSite(node *SiteNode) *sentanyl.Site {
 	}
 
 	if node.SEO != nil {
-		site.SEO = &sentanyl.SEOConfig{
+		site.SEO = &pkgmodels.SEOConfig{
 			MetaTitle:         node.SEO.MetaTitle,
 			MetaDescription:   node.SEO.MetaDescription,
 			OpenGraphImageURL: node.SEO.OpenGraphImageURL,
@@ -1537,14 +1537,14 @@ func (c *Compiler) compileSite(node *SiteNode) *sentanyl.Site {
 	}
 
 	if node.Navigation != nil {
-		site.Navigation = &sentanyl.NavigationConfig{
+		site.Navigation = &pkgmodels.NavigationConfig{
 			HeaderLinks: node.Navigation.HeaderLinks,
 			FooterLinks: node.Navigation.FooterLinks,
 		}
 	}
 
-	pageIds := &sentanyl.BsonCollectionIds{
-		CollectionName: sentanyl.FunnelPageCollection,
+	pageIds := &pkgmodels.BsonCollectionIds{
+		CollectionName: pkgmodels.FunnelPageCollection,
 	}
 	for _, pgNode := range node.Pages {
 		page := c.compilePage(pgNode)
@@ -1561,8 +1561,8 @@ func (c *Compiler) compileSite(node *SiteNode) *sentanyl.Site {
 // ---------- E-Commerce Compilation ----------
 
 // compileProduct compiles a ProductDeclNode into a Product entity (no price).
-func (c *Compiler) compileProduct(node *ProductDeclNode) *sentanyl.Product {
-	product := &sentanyl.Product{
+func (c *Compiler) compileProduct(node *ProductDeclNode) *pkgmodels.Product {
+	product := &pkgmodels.Product{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("product"),
 		SubscriberId: c.subscriberID,
@@ -1588,7 +1588,7 @@ func (c *Compiler) compileProduct(node *ProductDeclNode) *sentanyl.Product {
 	// Handle description_gen for course products
 	if node.DescriptionGen != nil {
 		product.DescriptionGenStatus = "pending"
-		product.DescriptionGenConfig = &sentanyl.GenConfig{
+		product.DescriptionGenConfig = &pkgmodels.GenConfig{
 			Instruction: node.DescriptionGen.Instruction,
 			References:  node.DescriptionGen.References,
 		}
@@ -1615,8 +1615,8 @@ func (c *Compiler) compileProduct(node *ProductDeclNode) *sentanyl.Product {
 }
 
 // compileModule compiles a ModuleNode into a Module entity.
-func (c *Compiler) compileModule(node *ModuleNode, order int) *sentanyl.Module {
-	mod := &sentanyl.Module{
+func (c *Compiler) compileModule(node *ModuleNode, order int) *pkgmodels.Module {
+	mod := &pkgmodels.Module{
 		Id:    bson.NewObjectId(),
 		Title: node.Title,
 		Order: order,
@@ -1631,8 +1631,8 @@ func (c *Compiler) compileModule(node *ModuleNode, order int) *sentanyl.Module {
 }
 
 // compileLesson compiles a LessonNode into a Lesson entity.
-func (c *Compiler) compileLesson(node *LessonNode, order int) *sentanyl.Lesson {
-	return &sentanyl.Lesson{
+func (c *Compiler) compileLesson(node *LessonNode, order int) *pkgmodels.Lesson {
+	return &pkgmodels.Lesson{
 		Id:            bson.NewObjectId(),
 		Title:         node.Title,
 		VideoURL:      node.VideoURL,
@@ -1644,12 +1644,12 @@ func (c *Compiler) compileLesson(node *LessonNode, order int) *sentanyl.Lesson {
 }
 
 // compileCourseModule compiles a ModuleNode into a CourseModule entity for LMS courses.
-func (c *Compiler) compileCourseModule(node *ModuleNode, defaultOrder int, product *sentanyl.Product) *sentanyl.CourseModule {
+func (c *Compiler) compileCourseModule(node *ModuleNode, defaultOrder int, product *pkgmodels.Product) *pkgmodels.CourseModule {
 	slug := node.Slug
 	if slug == "" {
 		slug = strings.ToLower(strings.ReplaceAll(node.Title, " ", "-"))
 	}
-	mod := &sentanyl.CourseModule{
+	mod := &pkgmodels.CourseModule{
 		Slug:  slug,
 		Title: node.Title,
 		Order: node.Order,
@@ -1681,8 +1681,8 @@ func (c *Compiler) compileCourseModule(node *ModuleNode, defaultOrder int, produ
 }
 
 // compileCourseLesson compiles a LessonNode into a CourseLesson entity for LMS courses.
-func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *sentanyl.CourseLesson {
-	lesson := &sentanyl.CourseLesson{
+func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *pkgmodels.CourseLesson {
+	lesson := &pkgmodels.CourseLesson{
 		Slug:          node.Slug,
 		Title:         node.Title,
 		Order:         node.Order,
@@ -1704,7 +1704,7 @@ func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *sent
 	// Handle content_gen
 	if node.ContentGen != nil {
 		lesson.ContentGenStatus = "pending"
-		lesson.ContentGenConfig = &sentanyl.GenConfig{
+		lesson.ContentGenConfig = &pkgmodels.GenConfig{
 			Instruction: node.ContentGen.Instruction,
 			References:  node.ContentGen.References,
 			Theme:       node.ContentGen.Theme,
@@ -1715,12 +1715,12 @@ func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *sent
 }
 
 // compileLMSQuiz compiles an LMSQuizNode into an LMSQuiz entity.
-func (c *Compiler) compileLMSQuiz(node *LMSQuizNode, moduleSlug string, product *sentanyl.Product) *sentanyl.LMSQuiz {
+func (c *Compiler) compileLMSQuiz(node *LMSQuizNode, moduleSlug string, product *pkgmodels.Product) *pkgmodels.LMSQuiz {
 	slug := node.Slug
 	if slug == "" {
 		slug = strings.ToLower(strings.ReplaceAll(node.Title, " ", "-"))
 	}
-	quiz := &sentanyl.LMSQuiz{
+	quiz := &pkgmodels.LMSQuiz{
 		Id:            bson.NewObjectId(),
 		PublicId:      generatePublicID("quiz"),
 		SubscriberId:  c.subscriberID,
@@ -1752,8 +1752,8 @@ func (c *Compiler) compileLMSQuiz(node *LMSQuizNode, moduleSlug string, product 
 }
 
 // compileLMSQuestion compiles an LMSQuestionNode into an LMSQuizQuestion.
-func (c *Compiler) compileLMSQuestion(node *LMSQuestionNode, order int) *sentanyl.LMSQuizQuestion {
-	q := &sentanyl.LMSQuizQuestion{
+func (c *Compiler) compileLMSQuestion(node *LMSQuestionNode, order int) *pkgmodels.LMSQuizQuestion {
+	q := &pkgmodels.LMSQuizQuestion{
 		Slug:  node.Slug,
 		Type:  node.Type,
 		Title: node.Title,
@@ -1779,8 +1779,8 @@ func (c *Compiler) compileLMSQuestion(node *LMSQuestionNode, order int) *sentany
 }
 
 // compileOffer compiles an OfferDeclNode into an Offer entity.
-func (c *Compiler) compileOffer(node *OfferDeclNode) *sentanyl.Offer {
-	offer := &sentanyl.Offer{
+func (c *Compiler) compileOffer(node *OfferDeclNode) *pkgmodels.Offer {
+	offer := &pkgmodels.Offer{
 		Id:           bson.NewObjectId(),
 		PublicId:     generatePublicID("offer"),
 		SubscriberId: c.subscriberID,
@@ -1803,7 +1803,7 @@ func (c *Compiler) compileOffer(node *OfferDeclNode) *sentanyl.Offer {
 	// Pre-create badges referenced in the offer
 	for _, badgeName := range node.GrantedBadges {
 		if _, exists := c.badges[badgeName]; !exists {
-			badge := &sentanyl.Badge{
+			badge := &pkgmodels.Badge{
 				Id:           bson.NewObjectId(),
 				PublicId:     generatePublicID("badge"),
 				SubscriberId: c.subscriberID,
@@ -1821,8 +1821,8 @@ func (c *Compiler) compileOffer(node *OfferDeclNode) *sentanyl.Offer {
 // ---------- Video Intelligence Compilation ----------
 
 // compileMediaDecl compiles a MediaDeclNode into a Media entity.
-func (c *Compiler) compileMediaDecl(node *MediaDeclNode) *sentanyl.Media {
-media := &sentanyl.Media{
+func (c *Compiler) compileMediaDecl(node *MediaDeclNode) *pkgmodels.Media {
+media := &pkgmodels.Media{
 Id:          bson.NewObjectId(),
 PublicId:    generatePublicID("media"),
 SubscriberId: c.subscriberID,
@@ -1845,7 +1845,7 @@ media.Kind = "video"
 
 // Compile chapters
 for _, ch := range node.Chapters {
-chapter := &sentanyl.MediaChapter{
+chapter := &pkgmodels.MediaChapter{
 PublicId: generatePublicID("chapter"),
 Title:    ch.Title,
 StartSec: ch.StartSec,
@@ -1856,7 +1856,7 @@ media.Chapters = append(media.Chapters, chapter)
 
 // Compile interactions
 for _, inter := range node.Interactions {
-interaction := &sentanyl.MediaInteraction{
+interaction := &pkgmodels.MediaInteraction{
 PublicId: generatePublicID("interaction"),
 Kind:     inter.Kind,
 StartSec: inter.StartSec,
@@ -1864,18 +1864,18 @@ EndSec:   inter.EndSec,
 }
 switch inter.Kind {
 case "turnstile":
-interaction.Config = sentanyl.TurnstileConfig{
+interaction.Config = pkgmodels.TurnstileConfig{
 Required: inter.Required,
 Fields:   inter.Fields,
 }
 case "cta":
-interaction.Config = sentanyl.CTAConfig{
+interaction.Config = pkgmodels.CTAConfig{
 Text:       inter.Text,
 URL:        inter.URL,
 ButtonText: inter.ButtonText,
 }
 case "annotation":
-interaction.Config = sentanyl.AnnotationConfig{
+interaction.Config = pkgmodels.AnnotationConfig{
 Text: inter.Text,
 URL:  inter.URL,
 }
@@ -1885,7 +1885,7 @@ media.Interactions = append(media.Interactions, interaction)
 
 // Compile badge rules
 for _, br := range node.BadgeRules {
-rule := &sentanyl.MediaBadgeRule{
+rule := &pkgmodels.MediaBadgeRule{
 PublicId:      generatePublicID("badge_rule"),
 EventName:     br.EventName,
 Operator:      br.Operator,
@@ -1897,7 +1897,7 @@ Enabled:       br.Enabled,
 // Pre-create referenced badge
 if br.BadgeName != "" {
 if _, exists := c.badges[br.BadgeName]; !exists {
-badge := &sentanyl.Badge{
+badge := &pkgmodels.Badge{
 Id:           bson.NewObjectId(),
 PublicId:     generatePublicID("badge"),
 SubscriberId: c.subscriberID,
@@ -1923,8 +1923,8 @@ return media
 }
 
 // compilePlayerPresetDecl compiles a PlayerPresetDeclNode into a PlayerPreset entity.
-func (c *Compiler) compilePlayerPresetDecl(node *PlayerPresetDeclNode) *sentanyl.PlayerPreset {
-	return &sentanyl.PlayerPreset{
+func (c *Compiler) compilePlayerPresetDecl(node *PlayerPresetDeclNode) *pkgmodels.PlayerPreset {
+	return &pkgmodels.PlayerPreset{
 		Id:                bson.NewObjectId(),
 		PublicId:          generatePublicID("preset"),
 		SubscriberId:      c.subscriberID,
@@ -1959,8 +1959,8 @@ func (c *Compiler) compilePlayerPresetDecl(node *PlayerPresetDeclNode) *sentanyl
 }
 
 // compileChannelDecl compiles a ChannelDeclNode into a MediaChannel entity.
-func (c *Compiler) compileChannelDecl(node *ChannelDeclNode) *sentanyl.MediaChannel {
-channel := &sentanyl.MediaChannel{
+func (c *Compiler) compileChannelDecl(node *ChannelDeclNode) *pkgmodels.MediaChannel {
+channel := &pkgmodels.MediaChannel{
 Id:          bson.NewObjectId(),
 PublicId:    generatePublicID("channel"),
 SubscriberId: c.subscriberID,
@@ -1975,7 +1975,7 @@ channel.Title = node.Name
 
 // Resolve media items by name
 for i, mediaName := range node.Items {
-item := &sentanyl.MediaChannelItem{
+item := &pkgmodels.MediaChannelItem{
 MediaPublicId: mediaName,
 Order:         i + 1,
 }
@@ -1990,8 +1990,8 @@ return channel
 }
 
 // compileMediaWebhookDecl compiles a MediaWebhookDeclNode into a MediaWebhook entity.
-func (c *Compiler) compileMediaWebhookDecl(node *MediaWebhookDeclNode) *sentanyl.MediaWebhook {
-return &sentanyl.MediaWebhook{
+func (c *Compiler) compileMediaWebhookDecl(node *MediaWebhookDeclNode) *pkgmodels.MediaWebhook {
+return &pkgmodels.MediaWebhook{
 Id:           bson.NewObjectId(),
 PublicId:     generatePublicID("webhook"),
 SubscriberId: c.subscriberID,

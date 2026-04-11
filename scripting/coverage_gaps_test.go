@@ -3,7 +3,7 @@ package scripting
 import (
 	"testing"
 
-	sentanyl "sentanyl/story/sentanyl"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -277,7 +277,7 @@ func TestCoverageSceneDefaultsTriggers(t *testing.T) {
 		}
 
 		// Verify not_open trigger exists (from scene_defaults)
-		notOpenTriggers := en.OnEvent[sentanyl.OnNotOpen]
+		notOpenTriggers := en.OnEvent[pkgmodels.OnNotOpen]
 		if len(notOpenTriggers) == 0 {
 			t.Errorf("enactment %d (%s): expected OnNotOpen trigger from scene_defaults", i, en.Name)
 		}

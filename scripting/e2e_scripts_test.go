@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	sentanyl "sentanyl/story/sentanyl"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -71,12 +71,12 @@ func TestE2ECompoundTriggerConditions(t *testing.T) {
 	}
 
 	// Verify compound badge requirement on first trigger (Elite)
-	clickTriggers := campaignEn.OnEvent[sentanyl.OnClick]
+	clickTriggers := campaignEn.OnEvent[pkgmodels.OnClick]
 	if len(clickTriggers) == 0 {
 		t.Fatal("expected OnClick triggers")
 	}
 	// Find the elite trigger (priority 3)
-	var eliteTrigger *sentanyl.Trigger
+	var eliteTrigger *pkgmodels.Trigger
 	for _, tr := range clickTriggers {
 		if int(tr.Priority) == 3 {
 			eliteTrigger = tr
@@ -149,10 +149,10 @@ func TestE2EConditionalRoutingScript(t *testing.T) {
 
 	// Click trigger on SL1 enactment
 	en := sl1.Acts[0]
-	if len(en.OnEvent[sentanyl.OnClick]) != 1 {
-		t.Errorf("expected 1 OnClick trigger, got %d", len(en.OnEvent[sentanyl.OnClick]))
+	if len(en.OnEvent[pkgmodels.OnClick]) != 1 {
+		t.Errorf("expected 1 OnClick trigger, got %d", len(en.OnEvent[pkgmodels.OnClick]))
 	}
-	tr := en.OnEvent[sentanyl.OnClick][0]
+	tr := en.OnEvent[pkgmodels.OnClick][0]
 	if tr.DoAction == nil || !tr.DoAction.AdvanceToNextStoryline {
 		t.Error("expected advance_to_next_storyline on click trigger")
 	}
@@ -178,7 +178,7 @@ func TestE2EConditionalTriggerScript(t *testing.T) {
 	// SL1 campaign enactment has 3 click triggers
 	sl1 := story.Storylines[0]
 	campaignEn := sl1.Acts[0]
-	clickTriggers := campaignEn.OnEvent[sentanyl.OnClick]
+	clickTriggers := campaignEn.OnEvent[pkgmodels.OnClick]
 	if len(clickTriggers) != 3 {
 		t.Fatalf("expected 3 click triggers on SL1 campaign enactment, got %d", len(clickTriggers))
 	}
@@ -203,7 +203,7 @@ func TestE2EConditionalTriggerScript(t *testing.T) {
 
 	// VIP confirmation trigger has mark_complete
 	vipEn := slVIP.Acts[0]
-	vipClickTriggers := vipEn.OnEvent[sentanyl.OnClick]
+	vipClickTriggers := vipEn.OnEvent[pkgmodels.OnClick]
 	if len(vipClickTriggers) != 1 {
 		t.Fatalf("expected 1 click trigger on VIP enactment, got %d", len(vipClickTriggers))
 	}
@@ -252,7 +252,7 @@ func TestE2EStorylineBadgeGatingScript(t *testing.T) {
 
 	// Click trigger on SL1 enactment advances to next storyline
 	en := sl1.Acts[0]
-	tr := en.OnEvent[sentanyl.OnClick]
+	tr := en.OnEvent[pkgmodels.OnClick]
 	if len(tr) != 1 {
 		t.Fatalf("expected 1 click trigger on SL1, got %d", len(tr))
 	}
@@ -273,7 +273,7 @@ func TestE2EStoryInterruptionScript(t *testing.T) {
 		t.Fatalf("expected 2 stories, got %d", len(result.Stories))
 	}
 
-	var newsletter, cart *sentanyl.Story
+	var newsletter, cart *pkgmodels.Story
 	for _, s := range result.Stories {
 		switch s.Name {
 		case "Monthly Newsletter":
@@ -322,7 +322,7 @@ func TestE2EStoryInterruptionScript(t *testing.T) {
 
 	// Cart has 1 enactment with click trigger → advance_to_next_storyline
 	cartEn := cart.Storylines[0].Acts[0]
-	cartClick := cartEn.OnEvent[sentanyl.OnClick]
+	cartClick := cartEn.OnEvent[pkgmodels.OnClick]
 	if len(cartClick) != 1 {
 		t.Fatalf("expected 1 click trigger on cart, got %d", len(cartClick))
 	}
@@ -352,7 +352,7 @@ func TestE2EOutboundWebhooksScript(t *testing.T) {
 	if en.SendScene.Message.Content.Subject != "🪝 Webhook Demo — Click to Fire Events" {
 		t.Errorf("unexpected subject %q", en.SendScene.Message.Content.Subject)
 	}
-	tr := en.OnEvent[sentanyl.OnClick]
+	tr := en.OnEvent[pkgmodels.OnClick]
 	if len(tr) != 1 {
 		t.Fatalf("expected 1 click trigger, got %d", len(tr))
 	}
@@ -382,7 +382,7 @@ func TestE2EPersistentLinksScript(t *testing.T) {
 	// Verify persist_scope on EA/EB enactments (first 6)
 	for i := 0; i < 6; i++ {
 		en := sl.Acts[i]
-		clickTriggers := en.OnEvent[sentanyl.OnClick]
+		clickTriggers := en.OnEvent[pkgmodels.OnClick]
 		if len(clickTriggers) == 0 {
 			t.Fatalf("expected click trigger on enactment %d", i)
 		}
@@ -395,7 +395,7 @@ func TestE2EPersistentLinksScript(t *testing.T) {
 	// Verify EC/ED enactments have NO persist_scope (default)
 	for i := 6; i < 12; i++ {
 		en := sl.Acts[i]
-		clickTriggers := en.OnEvent[sentanyl.OnClick]
+		clickTriggers := en.OnEvent[pkgmodels.OnClick]
 		if len(clickTriggers) == 0 {
 			t.Fatalf("expected click trigger on enactment %d", i)
 		}
@@ -406,7 +406,7 @@ func TestE2EPersistentLinksScript(t *testing.T) {
 	}
 
 	// Verify A/B triggers jump to EC-Sc1 (forward reference stored in ActionName)
-	ea1Click := sl.Acts[0].OnEvent[sentanyl.OnClick][0]
+	ea1Click := sl.Acts[0].OnEvent[pkgmodels.OnClick][0]
 	if ea1Click.DoAction == nil {
 		t.Fatal("expected action on EA-Sc1 trigger")
 	}
@@ -417,7 +417,7 @@ func TestE2EPersistentLinksScript(t *testing.T) {
 	}
 
 	// Verify C/D triggers advance to next storyline
-	ec1Click := sl.Acts[6].OnEvent[sentanyl.OnClick][0]
+	ec1Click := sl.Acts[6].OnEvent[pkgmodels.OnClick][0]
 	if ec1Click.DoAction == nil || !ec1Click.DoAction.AdvanceToNextStoryline {
 		t.Error("expected EC-Sc1 trigger to advance_to_next_storyline")
 	}
@@ -473,7 +473,7 @@ func TestE2EDeferredTransitionsScript(t *testing.T) {
 
 	// Verify send_immediate false on A/B triggers
 	ea1 := sl1.Acts[0]
-	ea1Click := ea1.OnEvent[sentanyl.OnClick]
+	ea1Click := ea1.OnEvent[pkgmodels.OnClick]
 	if len(ea1Click) == 0 {
 		t.Fatal("expected click trigger on EA-Sc1")
 	}
@@ -493,7 +493,7 @@ func TestE2EDeferredTransitionsScript(t *testing.T) {
 
 	// Verify C/D triggers have advance_to_next_storyline with send_immediate false
 	ec1 := sl1.Acts[6] // order 7 = index 6
-	ec1Click := ec1.OnEvent[sentanyl.OnClick]
+	ec1Click := ec1.OnEvent[pkgmodels.OnClick]
 	if len(ec1Click) == 0 {
 		t.Fatal("expected click trigger on EC-Sc1")
 	}
@@ -534,7 +534,7 @@ func TestE2EMailhogFullSequenceScript(t *testing.T) {
 
 	// A triggers: jump to EC-Sc1 (NO send_immediate false = instant)
 	ea1 := sl1.Acts[0]
-	ea1Click := ea1.OnEvent[sentanyl.OnClick]
+	ea1Click := ea1.OnEvent[pkgmodels.OnClick]
 	if len(ea1Click) == 0 {
 		t.Fatal("expected click trigger on EA-Sc1")
 	}
@@ -550,7 +550,7 @@ func TestE2EMailhogFullSequenceScript(t *testing.T) {
 
 	// C triggers: advance_to_next_storyline (instant)
 	ec1 := sl1.Acts[6]
-	ec1Click := ec1.OnEvent[sentanyl.OnClick]
+	ec1Click := ec1.OnEvent[pkgmodels.OnClick]
 	if len(ec1Click) == 0 {
 		t.Fatal("expected click trigger on EC-Sc1")
 	}
@@ -585,7 +585,7 @@ func TestE2EHybridTransitionsScript(t *testing.T) {
 
 	// A/B triggers: deferred (send_immediate false) → jump to EC-Sc1
 	ea1 := sl1.Acts[0]
-	ea1Click := ea1.OnEvent[sentanyl.OnClick]
+	ea1Click := ea1.OnEvent[pkgmodels.OnClick]
 	if len(ea1Click) == 0 {
 		t.Fatal("expected click trigger on EA-Sc1")
 	}
@@ -596,7 +596,7 @@ func TestE2EHybridTransitionsScript(t *testing.T) {
 
 	// C/D triggers: instant → jump to EE-Sc1 (thank you)
 	ec1 := sl1.Acts[6]
-	ec1Click := ec1.OnEvent[sentanyl.OnClick]
+	ec1Click := ec1.OnEvent[pkgmodels.OnClick]
 	if len(ec1Click) == 0 {
 		t.Fatal("expected click trigger on EC-Sc1")
 	}

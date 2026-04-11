@@ -4,7 +4,7 @@ import (
 	"net"
 	"strings"
 
-	coremodels "github.com/josephalai/sentanyl/core-service/models"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 )
 
 type DNSVerificationResult struct {
@@ -18,7 +18,7 @@ type DNSVerificationResult struct {
 
 // VerifyDomainDNS checks whether the required DNS records for a sending domain
 // have been properly configured by the user.
-func VerifyDomainDNS(domain *coremodels.SendingDomain, serverIP string) *DNSVerificationResult {
+func VerifyDomainDNS(domain *pkgmodels.SendingDomain, serverIP string) *DNSVerificationResult {
 	result := &DNSVerificationResult{}
 
 	// DKIM check: look up TXT record at selector._domainkey.parentDomain

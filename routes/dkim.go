@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	coremodels "github.com/josephalai/sentanyl/core-service/models"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 )
 
 // GenerateDKIMKeyPair creates an RSA-2048 key pair for DKIM signing.
@@ -34,8 +34,8 @@ func GenerateDKIMKeyPair() (privatePEM string, publicBase64 string, err error) {
 }
 
 // FormatDNSRecords computes the DNS records a user must add for their sending domain.
-func FormatDNSRecords(selector, sendingDomain, parentDomain, publicBase64, serverIP string) coremodels.DNSRecords {
-	return coremodels.DNSRecords{
+func FormatDNSRecords(selector, sendingDomain, parentDomain, publicBase64, serverIP string) pkgmodels.DNSRecords {
+	return pkgmodels.DNSRecords{
 		DKIMName: fmt.Sprintf("%s._domainkey.%s", selector, parentDomain),
 		DKIM:     fmt.Sprintf("v=DKIM1; k=rsa; p=%s", publicBase64),
 		SPF:      fmt.Sprintf("v=spf1 ip4:%s ~all", serverIP),

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	coremodels "github.com/josephalai/sentanyl/core-service/models"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
 
@@ -23,8 +23,8 @@ const ServerIP = "5.78.200.152"
 
 // findDomainByPublicId looks up a SendingDomain by public_id + creator_id
 // (verifying the creator owns this domain).
-func findDomainByPublicId(domainId, creatorPublicId string) (*coremodels.SendingDomain, error) {
-	sd := coremodels.SendingDomain{}
+func findDomainByPublicId(domainId, creatorPublicId string) (*pkgmodels.SendingDomain, error) {
+	sd := pkgmodels.SendingDomain{}
 	query := bson.M{
 		"public_id":             domainId,
 		"creator_id":            creatorPublicId,
@@ -37,8 +37,8 @@ func findDomainByPublicId(domainId, creatorPublicId string) (*coremodels.Sending
 }
 
 // GetCreatorByPublicId looks up a Creator by public_id.
-func GetCreatorByPublicId(publicId string) (*coremodels.Creator, error) {
-	c := coremodels.Creator{}
+func GetCreatorByPublicId(publicId string) (*pkgmodels.Creator, error) {
+	c := pkgmodels.Creator{}
 	err := db.GetCollection(models.CreatorCollection).Find(bson.M{"public_id": publicId}).One(&c)
 	if err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func HandleAddDomain(c *gin.Context) {
 	}
 
 	// Check for duplicate domain under this creator.
-	existing := coremodels.SendingDomain{}
+	existing := pkgmodels.SendingDomain{}
 	dupQuery := bson.M{
 		"domain":                req.Domain,
 		"creator_id":            creator.PublicId,
@@ -190,7 +190,7 @@ func HandleAddDomain(c *gin.Context) {
 	dnsRecords := FormatDNSRecords(req.Selector, req.Domain, parentDom, pubBase64, ServerIP)
 
 	// 4. Save SendingDomain entity.
-	sd := coremodels.NewSendingDomain()
+	sd := pkgmodels.NewSendingDomain()
 	sd.CreatorId = creator.PublicId
 	sd.Domain = req.Domain
 	sd.Selector = req.Selector
@@ -227,7 +227,7 @@ func HandleGetDomains(c *gin.Context) {
 		return
 	}
 
-	var domains []coremodels.SendingDomain
+	var domains []pkgmodels.SendingDomain
 	query := bson.M{
 		"creator_id":            subscriberId,
 		"timestamps.deleted_at": nil,
@@ -237,7 +237,7 @@ func HandleGetDomains(c *gin.Context) {
 		return
 	}
 	if domains == nil {
-		domains = []coremodels.SendingDomain{}
+		domains = []pkgmodels.SendingDomain{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -322,8 +322,8 @@ func HandleVerifyDNS(c *gin.Context) {
 
 	result := VerifyDomainDNS(sd, ServerIP)
 
-	if result.DKIMValid && result.SPFValid && sd.Status == coremodels.DomainStatusPendingDNS {
-		sd.Status = coremodels.DomainStatusActive
+	if result.DKIMValid && result.SPFValid && sd.Status == pkgmodels.DomainStatusPendingDNS {
+		sd.Status = pkgmodels.DomainStatusActive
 		sd.SetUpdated()
 		_ = db.GetCollection(models.SendingDomainCollection).UpdateId(sd.Id, sd)
 	}
@@ -560,7 +560,7 @@ func HandlePauseDomain(c *gin.Context) {
 		return
 	}
 
-	sd.Status = coremodels.DomainStatusPaused
+	sd.Status = pkgmodels.DomainStatusPaused
 	sd.SetUpdated()
 	_ = db.GetCollection(models.SendingDomainCollection).UpdateId(sd.Id, sd)
 
@@ -591,7 +591,7 @@ func HandleResumeDomain(c *gin.Context) {
 		return
 	}
 
-	sd.Status = coremodels.DomainStatusActive
+	sd.Status = pkgmodels.DomainStatusActive
 	sd.SetUpdated()
 	_ = db.GetCollection(models.SendingDomainCollection).UpdateId(sd.Id, sd)
 
