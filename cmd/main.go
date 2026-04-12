@@ -85,6 +85,20 @@ func main() {
 	r.POST("/api/domain/:domainId/pause", routes.HandlePauseDomain)
 	r.POST("/api/domain/:domainId/resume", routes.HandleResumeDomain)
 
+	// Script compiler (SentanylScript DSL).
+	routes.RegisterScriptRoutes(r)
+
+	// Story builder — stories, storylines, enactments, scenes, messages,
+	// triggers, actions, badges, tags, users, email lists, stats, etc.
+	routes.RegisterStoryRoutes(r)
+
+	// Story execution engine — internal endpoint + scheduler goroutine.
+	routes.RegisterStoryEngineRoutes(r)
+	routes.StartStoryScheduler()
+
+	// Email click tracking.
+	routes.RegisterTrackingRoutes(r)
+
 	log.Printf("core-service: listening on :%s", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("core-service: failed to start: %v", err)
