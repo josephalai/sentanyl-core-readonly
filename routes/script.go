@@ -226,9 +226,7 @@ func handleDeployScript(c *gin.Context) {
 	})
 }
 
-func handleScriptAI(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "AI chat not yet configured on this server"})
-}
+// handleScriptAI is defined in script_ai.go
 
 func handleScriptReference(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"reference": "SentanylScript DSL reference — see docs."})
