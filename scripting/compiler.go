@@ -36,7 +36,8 @@ type CompileResult struct {
 	MediaWebhooks   []*pkgmodels.MediaWebhook
 
 	// LMS entities
-	Quizzes []*pkgmodels.LMSQuiz
+	Quizzes            []*pkgmodels.LMSQuiz
+	CertificateTemplates []*pkgmodels.CertificateTemplate
 
 	// All entities generated, keyed by name for reference.
 	Badges         map[string]*pkgmodels.Badge
@@ -75,6 +76,9 @@ type Compiler struct {
 
 	// Pending quiz entities accumulated during compilation
 	pendingQuizzes []*pkgmodels.LMSQuiz
+
+	// Pending certificate templates accumulated during compilation
+	certTemplates []*pkgmodels.CertificateTemplate
 
 	// Retry metadata embedded in triggers
 	retryCounters map[string]int // keyed by enactment path
@@ -233,6 +237,7 @@ func (c *Compiler) Compile() *CompileResult {
 	result.Tags = c.tags
 	result.Assets = c.pendingAssets
 	result.Quizzes = c.pendingQuizzes
+	result.CertificateTemplates = c.certTemplates
 	result.Diagnostics = c.errors
 	return result
 }
@@ -1738,6 +1743,8 @@ func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *pkgm
 }
 
 // compileCourseDecl compiles a CourseDeclNode into a Product entity (syntactic sugar).
+// Supports both "authored" mode (inline modules/lessons) and "generate" mode
+// (emits a generation job config instead of a materialized course tree).
 func (c *Compiler) compileCourseDecl(node *CourseDeclNode) *pkgmodels.Product {
 	productNode := &ProductDeclNode{
 		NodeBase:       node.NodeBase,
@@ -1751,8 +1758,15 @@ func (c *Compiler) compileCourseDecl(node *CourseDeclNode) *pkgmodels.Product {
 		Modules:        node.Modules,
 	}
 	product := c.compileProduct(productNode)
-	if node.Audience != "" || node.Outcome != "" || node.Tone != "" || node.ExtraContext != "" || node.DefaultMedia != "" || len(node.References) > 0 {
+
+	mode := node.Mode
+	if mode == "" {
+		mode = "authored"
+	}
+
+	if node.Audience != "" || node.Outcome != "" || node.Tone != "" || node.ExtraContext != "" || node.DefaultMedia != "" || len(node.References) > 0 || mode != "authored" {
 		product.CourseGenConfig = &pkgmodels.CourseGenConfig{
+			Mode:         mode,
 			Audience:     node.Audience,
 			Outcome:      node.Outcome,
 			Tone:         node.Tone,
@@ -1761,15 +1775,91 @@ func (c *Compiler) compileCourseDecl(node *CourseDeclNode) *pkgmodels.Product {
 			References:   node.References,
 		}
 	}
+
+	// Persist certificate config if specified
+	if node.CertConfig != nil {
+		certTemplate := &pkgmodels.CertificateTemplate{
+			Id:              bson.NewObjectId(),
+			PublicId:        generatePublicID("cert-tmpl"),
+			ProductPublicId: product.PublicId,
+			SubscriberId:    c.subscriberID,
+			Title:           node.CertConfig.Title,
+			TemplateName:    node.CertConfig.TemplateName,
+			LogoURL:         node.CertConfig.LogoURL,
+			AccentColor:     node.CertConfig.AccentColor,
+			Enabled:         node.CertConfig.Enabled,
+		}
+		if certTemplate.Title == "" {
+			certTemplate.Title = product.Name + " Certificate"
+		}
+		if certTemplate.TemplateName == "" {
+			certTemplate.TemplateName = "default"
+		}
+		c.certTemplates = append(c.certTemplates, certTemplate)
+	}
+
 	return product
 }
 
 // resolveCourseRef resolves a course_ref("name") to the course's PublicId.
+// When projection is provided, resolves to specific course properties.
 func (c *Compiler) resolveCourseRef(name string) string {
 	if product, ok := c.productMap[name]; ok {
 		return product.PublicId
 	}
 	return ""
+}
+
+// resolveCourseRefProjection resolves a course_ref("name").projection to a value.
+func (c *Compiler) resolveCourseRefProjection(name, projection string) interface{} {
+	product, ok := c.productMap[name]
+	if !ok {
+		return nil
+	}
+	switch projection {
+	case "title":
+		return product.Name
+	case "description":
+		return product.Description
+	case "outline":
+		// Return a structural summary of modules + lessons
+		var outline []map[string]interface{}
+		for _, mod := range product.CourseModules {
+			modMap := map[string]interface{}{
+				"title": mod.Title,
+				"slug":  mod.Slug,
+				"order": mod.Order,
+			}
+			var lessons []string
+			for _, l := range mod.Lessons {
+				lessons = append(lessons, l.Title)
+			}
+			modMap["lessons"] = lessons
+			outline = append(outline, modMap)
+		}
+		return outline
+	case "lesson_titles":
+		var titles []string
+		for _, mod := range product.CourseModules {
+			for _, l := range mod.Lessons {
+				titles = append(titles, l.Title)
+			}
+		}
+		return titles
+	case "certificate_enabled":
+		for _, tmpl := range c.certTemplates {
+			if tmpl.ProductPublicId == product.PublicId {
+				return tmpl.Enabled
+			}
+		}
+		return false
+	case "module_count":
+		return len(product.CourseModules)
+	case "total_lessons":
+		return product.TotalLessons
+	default:
+		return product.PublicId
+	}
 }
 
 // compileLMSQuiz compiles an LMSQuizNode into an LMSQuiz entity.

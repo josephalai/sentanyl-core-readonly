@@ -279,6 +279,7 @@ const (
 	TokOutcome       // outcome
 	TokTone          // tone
 	TokDefaultMedia  // default_media
+	TokGenMode       // mode
 
 	// Keywords — Video Intelligence
 	TokMedia         // media
@@ -565,6 +566,7 @@ var tokenNames = map[TokenKind]string{
 	TokOutcome:      "outcome",
 	TokTone:         "tone",
 	TokDefaultMedia: "default_media",
+	TokGenMode:      "mode",
 
 	// E-commerce & advanced funnel tokens
 	TokProduct:         "product",
@@ -794,6 +796,7 @@ var keywords = map[string]TokenKind{
 	"outcome":                        TokOutcome,
 	"tone":                           TokTone,
 	"default_media":                  TokDefaultMedia,
+	"mode":                           TokGenMode,
 	"media":                          TokMedia,
 	"player_preset":                  TokPlayerPreset,
 	"channel":                        TokChannel,

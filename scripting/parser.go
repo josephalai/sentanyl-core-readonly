@@ -2518,6 +2518,13 @@ func (p *Parser) parseCourseDecl() *CourseDeclNode {
 			} else if p.isIdentLike() {
 				node.DefaultMedia = p.advanceIdentLike()
 			}
+		case TokGenMode:
+			p.advance()
+			if p.check(TokString) {
+				node.Mode = p.expectString()
+			} else if p.isIdentLike() {
+				node.Mode = p.advanceIdentLike()
+			}
 		case TokTheme:
 			p.advance()
 			if p.check(TokString) {
@@ -2558,6 +2565,12 @@ func (p *Parser) parseCourseDecl() *CourseDeclNode {
 					node.DefaultMedia = p.expectString()
 				} else if p.isIdentLike() {
 					node.DefaultMedia = p.advanceIdentLike()
+				}
+			case "mode":
+				if p.check(TokString) {
+					node.Mode = p.expectString()
+				} else if p.isIdentLike() {
+					node.Mode = p.advanceIdentLike()
 				}
 			default:
 				p.errorf("unexpected identifier %q in course block", ident)

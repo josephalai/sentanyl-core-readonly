@@ -632,6 +632,7 @@ type CourseDeclNode struct {
 	Instructor     string
 	ThumbnailURL   string
 	Status         string
+	Mode           string // "authored" or "generate"
 	DescriptionGen *DescriptionGenNode
 	Modules        []*ModuleNode
 	CertConfig     *CourseCertConfigNode
