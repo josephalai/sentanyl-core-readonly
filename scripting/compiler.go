@@ -1764,7 +1764,7 @@ func (c *Compiler) compileCourseDecl(node *CourseDeclNode) *pkgmodels.Product {
 		mode = "authored"
 	}
 
-	if node.Audience != "" || node.Outcome != "" || node.Tone != "" || node.ExtraContext != "" || node.DefaultMedia != "" || len(node.References) > 0 || mode != "authored" {
+	if node.Audience != "" || node.Outcome != "" || node.Tone != "" || node.ExtraContext != "" || node.DefaultMedia != "" || len(node.References) > 0 || node.Mode != "" {
 		product.CourseGenConfig = &pkgmodels.CourseGenConfig{
 			Mode:         mode,
 			Audience:     node.Audience,

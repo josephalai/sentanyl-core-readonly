@@ -2601,6 +2601,9 @@ func (p *Parser) parseCourseCertConfig() *CourseCertConfigNode {
 			} else {
 				node.Enabled = true
 			}
+		case TokTitle:
+			p.advance()
+			node.Title = p.expectString()
 		case TokIdent:
 			ident := p.cur().Literal
 			p.advance()

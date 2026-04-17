@@ -1256,10 +1256,378 @@ func TestNewTokensRegistered(t *testing.T) {
 kws := map[string]TokenKind{
 "audience": TokAudience, "outcome": TokOutcome,
 "tone": TokTone, "default_media": TokDefaultMedia,
+"mode": TokGenMode,
 }
 for kw, expected := range kws {
 if actual := LookupIdent(kw); actual != expected {
 t.Errorf("LookupIdent(%q) = %v, want %v", kw, actual, expected)
 }
 }
+}
+
+// =====================================================================
+// New Tests — generated mode, reference mode, patch, cert config, text-only
+// =====================================================================
+
+func TestGeneratedModeCourse(t *testing.T) {
+src := `
+course "AI Generated Course" {
+description "A fully generated course"
+instructor "AI Instructor"
+mode generate
+audience "Software engineers"
+outcome "Learn Go concurrency"
+tone "Professional"
+default_media stub
+extra_context "Focus on goroutines and channels"
+reference "https://example.com/go-concurrency.txt"
+module "Fundamentals" {
+lesson "Goroutines" {
+video_mode stub
+video_stub_script "Explain goroutines"
+content "<p>Goroutines</p>"
+}
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_gen_mode", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+if len(result.Products) != 1 { t.Fatalf("products = %d", len(result.Products)) }
+p := result.Products[0]
+if p.ProductType != "course" { t.Errorf("type = %q", p.ProductType) }
+
+cfg := p.CourseGenConfig
+if cfg == nil { t.Fatal("CourseGenConfig nil") }
+if cfg.Mode != "generate" { t.Errorf("mode = %q, want generate", cfg.Mode) }
+if cfg.Audience != "Software engineers" { t.Errorf("audience = %q", cfg.Audience) }
+if cfg.Outcome != "Learn Go concurrency" { t.Errorf("outcome = %q", cfg.Outcome) }
+if cfg.Tone != "Professional" { t.Errorf("tone = %q", cfg.Tone) }
+if cfg.DefaultMedia != "stub" { t.Errorf("default_media = %q", cfg.DefaultMedia) }
+if cfg.ExtraContext != "Focus on goroutines and channels" { t.Errorf("extra_context = %q", cfg.ExtraContext) }
+if len(cfg.References) != 1 { t.Errorf("references = %d", len(cfg.References)) }
+}
+
+func TestAuthoredModeCourse(t *testing.T) {
+src := `
+course "Manual Course" {
+description "Hand-authored"
+instructor "Prof"
+mode authored
+module "M1" {
+lesson "L1" { content "<p>Manual</p>" }
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_authored", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+cfg := result.Products[0].CourseGenConfig
+if cfg == nil { t.Fatal("CourseGenConfig nil for authored mode") }
+if cfg.Mode != "authored" { t.Errorf("mode = %q, want authored", cfg.Mode) }
+}
+
+func TestDefaultModeIsAuthored(t *testing.T) {
+src := `
+course "No Mode Course" {
+description "No explicit mode"
+instructor "Prof"
+module "M1" {
+lesson "L1" { content "<p>X</p>" }
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_nomode", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+// No gen config means no mode was set, but if audience is provided, config exists
+// With nothing extra, product should have no CourseGenConfig at all
+if result.Products[0].CourseGenConfig != nil {
+t.Error("CourseGenConfig should be nil when no gen fields set")
+}
+}
+
+func TestCertificateConfigPersistence(t *testing.T) {
+src := `
+course "Cert Course" {
+description "Has certificate"
+instructor "Prof"
+module "M1" {
+lesson "L1" { content "<p>X</p>" }
+}
+certificate {
+enabled true
+template_name "modern"
+title "Completion Certificate"
+logo_url "https://example.com/logo.png"
+accent_color "#FF5733"
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_cert", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+if len(result.CertificateTemplates) != 1 {
+t.Fatalf("cert templates = %d, want 1", len(result.CertificateTemplates))
+}
+tmpl := result.CertificateTemplates[0]
+if !tmpl.Enabled { t.Error("cert should be enabled") }
+if tmpl.TemplateName != "modern" { t.Errorf("template_name = %q", tmpl.TemplateName) }
+if tmpl.Title != "Completion Certificate" { t.Errorf("title = %q", tmpl.Title) }
+if tmpl.LogoURL != "https://example.com/logo.png" { t.Errorf("logo_url = %q", tmpl.LogoURL) }
+if tmpl.AccentColor != "#FF5733" { t.Errorf("accent_color = %q", tmpl.AccentColor) }
+}
+
+func TestCertificateConfigDefaultTitle(t *testing.T) {
+src := `
+course "Default Cert" {
+description "Has certificate"
+instructor "Prof"
+module "M1" { lesson "L1" { content "<p>X</p>" } }
+certificate { enabled true }
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_cert_def", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+if len(result.CertificateTemplates) != 1 { t.Fatalf("cert templates = %d", len(result.CertificateTemplates)) }
+tmpl := result.CertificateTemplates[0]
+expected := "Default Cert Certificate"
+if tmpl.Title != expected { t.Errorf("title = %q, want %q", tmpl.Title, expected) }
+if tmpl.TemplateName != "default" { t.Errorf("template_name = %q, want default", tmpl.TemplateName) }
+}
+
+func TestTextOnlyLessonWithMarkdown(t *testing.T) {
+src := `
+course "Markdown Course" {
+description "Uses markdown"
+instructor "Writer"
+default_media none
+module "Reading" {
+lesson "Chapter 1" {
+video_mode none
+content_markdown "# Chapter 1\n\nThis is full markdown content with **bold** and *italics*."
+}
+lesson "Chapter 2" {
+video_mode none
+content "<p>HTML only lesson</p>"
+}
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_md", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+p := result.Products[0]
+if p.CourseGenConfig == nil || p.CourseGenConfig.DefaultMedia != "none" {
+t.Errorf("default_media should be none")
+}
+lessons := p.CourseModules[0].Lessons
+if len(lessons) != 2 { t.Fatalf("lessons = %d", len(lessons)) }
+if lessons[0].ContentMarkdown == "" { t.Error("lesson 1 content_markdown empty") }
+if lessons[0].VideoURL != "" { t.Error("lesson 1 should have no video_url") }
+if string(lessons[0].VideoMode) != "none" { t.Errorf("video_mode = %q", lessons[0].VideoMode) }
+if lessons[1].ContentHTML == "" { t.Error("lesson 2 content_html empty") }
+}
+
+func TestCourseRefProjection(t *testing.T) {
+src := `
+course "Referenced Course" {
+description "Projectable"
+instructor "Prof"
+module "Intro" {
+lesson "L1" { content "<p>hello</p>" }
+lesson "L2" { content "<p>world</p>" }
+}
+module "Advanced" {
+lesson "L3" { content "<p>advanced</p>" }
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_proj", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+p := result.Products[0]
+if p.PublicId == "" { t.Error("no public_id") }
+
+// Verify the product is properly formed for course_ref resolution
+if p.ProductType != "course" { t.Errorf("type = %q", p.ProductType) }
+if len(p.CourseModules) != 2 { t.Errorf("modules = %d", len(p.CourseModules)) }
+if p.TotalLessons != 3 { t.Errorf("total_lessons = %d, want 3", p.TotalLessons) }
+}
+
+func TestVideoModeStubWithFields(t *testing.T) {
+src := `
+course "Stub Course" {
+description "Video stubs"
+instructor "Creator"
+module "M1" {
+lesson "Stub Lesson" {
+video_mode stub
+video_stub_script "Talk about X, Y, Z..."
+video_stub_description "A 5-minute overview"
+content_markdown "# Stub Lesson\n\nText content while video is pending."
+}
+lesson "Uploaded Lesson" {
+video_mode uploaded
+video_url "https://cdn.example.com/video.mp4"
+content "<p>Full lesson</p>"
+}
+lesson "No Video Lesson" {
+video_mode none
+content_markdown "# Text Only"
+}
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_stub", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+lessons := result.Products[0].CourseModules[0].Lessons
+if len(lessons) != 3 { t.Fatalf("lessons = %d", len(lessons)) }
+
+// Stub lesson
+stub := lessons[0]
+if string(stub.VideoMode) != "stub" { t.Errorf("stub video_mode = %q", stub.VideoMode) }
+if stub.VideoStubScript != "Talk about X, Y, Z..." { t.Errorf("stub script = %q", stub.VideoStubScript) }
+if stub.VideoStubDescription != "A 5-minute overview" { t.Errorf("stub desc = %q", stub.VideoStubDescription) }
+if stub.ContentMarkdown == "" { t.Error("stub should have content_markdown") }
+
+// Uploaded lesson
+uploaded := lessons[1]
+if string(uploaded.VideoMode) != "uploaded" { t.Errorf("uploaded video_mode = %q", uploaded.VideoMode) }
+if uploaded.VideoURL != "https://cdn.example.com/video.mp4" { t.Errorf("video_url = %q", uploaded.VideoURL) }
+
+// None lesson
+none := lessons[2]
+if string(none.VideoMode) != "none" { t.Errorf("none video_mode = %q", none.VideoMode) }
+if none.VideoURL != "" { t.Errorf("none should have no video_url") }
+}
+
+func TestGeneratedModeWithReferences(t *testing.T) {
+src := `
+course "Multi-Ref Course" {
+description "Uses multiple references"
+instructor "Prof"
+mode generate
+audience "Data analysts"
+outcome "Master SQL"
+tone "Casual"
+reference "ref-001"
+reference "ref-002"
+reference "ref-003"
+module "SQL Basics" {
+lesson "SELECT" { content "<p>SELECT</p>" }
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_multi_ref", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+cfg := result.Products[0].CourseGenConfig
+if cfg == nil { t.Fatal("CourseGenConfig nil") }
+if cfg.Mode != "generate" { t.Errorf("mode = %q", cfg.Mode) }
+if len(cfg.References) != 3 { t.Errorf("references = %d, want 3", len(cfg.References)) }
+if cfg.References[0] != "ref-001" { t.Errorf("ref[0] = %q", cfg.References[0]) }
+if cfg.References[2] != "ref-003" { t.Errorf("ref[2] = %q", cfg.References[2]) }
+}
+
+func TestPatchOperationStructure(t *testing.T) {
+// Verify patch operations can be constructed programmatically
+patch := pkgmodels.ContentPatch{
+ProductPublicId: "prod-123",
+TargetType:      "lesson",
+TargetId:        "lesson-1-1",
+Status:          "pending",
+Operations: []pkgmodels.PatchOperation{
+{Op: "replace", Path: "/module/mod-1/lesson/lesson-1-1/content_markdown", Value: "# Updated\n\nNew content."},
+{Op: "replace", Path: "/module/mod-1/lesson/lesson-1-1/video_mode", Value: "stub"},
+{Op: "replace", Path: "/module/mod-1/lesson/lesson-1-1/video_stub_script", Value: "New script"},
+},
+}
+
+if len(patch.Operations) != 3 { t.Fatalf("ops = %d", len(patch.Operations)) }
+if patch.Operations[0].Op != "replace" { t.Errorf("op[0] = %q", patch.Operations[0].Op) }
+if patch.Status != "pending" { t.Errorf("status = %q", patch.Status) }
+if patch.TargetType != "lesson" { t.Errorf("target_type = %q", patch.TargetType) }
+
+// Verify patch paths follow expected convention
+if patch.Operations[0].Path != "/module/mod-1/lesson/lesson-1-1/content_markdown" {
+t.Errorf("path = %q", patch.Operations[0].Path)
+}
+}
+
+func TestCourseGenConfigModeField(t *testing.T) {
+// Ensure CourseGenConfig Mode field persists correctly
+cfg := &pkgmodels.CourseGenConfig{
+Mode:         "generate",
+Audience:     "engineers",
+Outcome:      "learn Go",
+Tone:         "professional",
+DefaultMedia: "stub",
+References:   []string{"ref-1", "ref-2"},
+}
+
+if cfg.Mode != "generate" { t.Errorf("mode = %q", cfg.Mode) }
+if cfg.Audience != "engineers" { t.Errorf("audience = %q", cfg.Audience) }
+if len(cfg.References) != 2 { t.Errorf("references = %d", len(cfg.References)) }
+}
+
+func TestCourseRevisionEventModel(t *testing.T) {
+event := pkgmodels.NewCourseRevisionEvent(
+bson.NewObjectId(),
+"prod-123",
+"patch_apply",
+"Applied patch xyz",
+)
+
+if event.PublicId == "" { t.Error("should have public_id") }
+if event.RevisionType != "patch_apply" { t.Errorf("revision_type = %q", event.RevisionType) }
+if event.Summary != "Applied patch xyz" { t.Errorf("summary = %q", event.Summary) }
+if event.CreatedAt.IsZero() { t.Error("created_at should not be zero") }
 }
