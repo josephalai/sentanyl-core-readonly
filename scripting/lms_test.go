@@ -3,6 +3,7 @@ package scripting
 import (
 	"testing"
 
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -893,4 +894,372 @@ story "Academy Completion" {
 	t.Logf("  CourseModules: %d", len(product.CourseModules))
 	t.Logf("  TotalLessons: %d", product.TotalLessons)
 	t.Logf("  Badges: %d", len(result.Badges))
+}
+
+// =====================================================================
+// New LMS AI/Generation Tests
+// =====================================================================
+
+func TestParseCourseBlock(t *testing.T) {
+src := `
+course "AI Mastery" {
+description "Master artificial intelligence"
+instructor "Dr. Sarah Chen"
+audience "Software developers"
+outcome "Build production-ready AI systems"
+tone "Professional"
+default_media stub
+reference "https://example.com/ai-overview.txt"
+reference "https://example.com/ml-basics.txt"
+
+module "Introduction to AI" {
+lesson "What is AI?" {
+video_mode stub
+video_stub_script "Start with the history of AI"
+video_stub_description "Overview of AI history"
+content "<p>Introduction to AI</p>"
+is_free true
+}
+lesson "Types of AI" {
+video_mode none
+content_markdown "## Types of AI\n\n- Narrow AI\n- General AI"
+}
+}
+
+module "Machine Learning" {
+lesson "Supervised Learning" {
+video_mode stub
+video_stub_script "Explain supervised learning"
+content "<p>Supervised learning</p>"
+drip_days 7
+}
+quiz "ML Quiz" {
+pass_threshold 75
+max_attempts 3
+question "What is supervised learning?" {
+type multiple_choice
+options ["Learning with labels", "Without labels", "By rewards", "None"]
+answer 0
+}
+}
+}
+
+certificate {
+enabled true
+template_name "professional"
+title "AI Mastery Certificate"
+accent_color "#2563eb"
+}
+}
+
+story "Minimal" {
+storyline "A" {
+enactment "B" {
+scene "C" {
+subject "test"
+body "test"
+from_email "a@b.com"
+from_name "A"
+reply_to "a@b.com"
+}
+}
+}
+}
+`
+pr := ParseScript(src); ast := pr.AST; diags := pr.Diagnostics
+if diags.HasErrors() {
+for _, d := range diags { t.Errorf("parse error: %v", d) }
+t.FailNow()
+}
+if len(ast.Courses) != 1 { t.Fatalf("expected 1 course, got %d", len(ast.Courses)) }
+c := ast.Courses[0]
+if c.Name != "AI Mastery" { t.Errorf("name = %q", c.Name) }
+if c.Instructor != "Dr. Sarah Chen" { t.Errorf("instructor = %q", c.Instructor) }
+if c.Audience != "Software developers" { t.Errorf("audience = %q", c.Audience) }
+if c.DefaultMedia != "stub" { t.Errorf("default_media = %q", c.DefaultMedia) }
+if len(c.References) != 2 { t.Errorf("references = %d, want 2", len(c.References)) }
+if len(c.Modules) != 2 { t.Fatalf("modules = %d, want 2", len(c.Modules)) }
+l1 := c.Modules[0].Lessons[0]
+if l1.VideoMode != "stub" { t.Errorf("lesson 1 video_mode = %q", l1.VideoMode) }
+if l1.VideoStubScript == "" { t.Error("lesson 1 video_stub_script empty") }
+if l1.VideoStubDescription == "" { t.Error("lesson 1 video_stub_description empty") }
+l2 := c.Modules[0].Lessons[1]
+if l2.VideoMode != "none" { t.Errorf("lesson 2 video_mode = %q", l2.VideoMode) }
+if l2.ContentMarkdown == "" { t.Error("lesson 2 content_markdown empty") }
+if c.CertConfig == nil { t.Fatal("certificate config nil") }
+if !c.CertConfig.Enabled { t.Error("certificate should be enabled") }
+if c.CertConfig.TemplateName != "professional" { t.Errorf("cert template = %q", c.CertConfig.TemplateName) }
+}
+
+func TestCompileCourseBlock(t *testing.T) {
+src := `
+course "Go Microservices" {
+description "Build microservices with Go"
+instructor "Alex Rivera"
+audience "Backend developers"
+outcome "Deploy Go microservices"
+tone "Technical"
+default_media stub
+
+module "Getting Started" {
+lesson "Why Microservices?" {
+video_mode stub
+video_stub_script "Introduce microservices"
+content "<p>Microservices overview</p>"
+is_free true
+}
+lesson "Setting Up Go" {
+video_mode none
+content "<p>Install Go</p>"
+}
+}
+
+module "Core Concepts" {
+lesson "gRPC Basics" {
+video_mode stub
+video_stub_script "Demonstrate gRPC"
+content "<p>gRPC fundamentals</p>"
+drip_days 3
+}
+quiz "Core Quiz" {
+pass_threshold 70
+max_attempts 3
+question "What protocol does gRPC use?" {
+type multiple_choice
+options ["REST", "HTTP/2", "WebSocket", "TCP"]
+answer 1
+}
+}
+}
+}
+
+story "Minimal" {
+storyline "A" {
+enactment "B" {
+scene "C" {
+subject "test"
+body "test"
+from_email "a@b.com"
+from_name "A"
+reply_to "a@b.com"
+}
+}
+}
+}
+`
+result := CompileScript(src, "sub_456", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("compile error: %v", d) }
+t.FailNow()
+}
+if len(result.Products) != 1 { t.Fatalf("products = %d", len(result.Products)) }
+p := result.Products[0]
+if p.ProductType != "course" { t.Errorf("type = %q", p.ProductType) }
+if p.InstructorName != "Alex Rivera" { t.Errorf("instructor = %q", p.InstructorName) }
+if p.CourseGenConfig == nil { t.Fatal("CourseGenConfig nil") }
+if p.CourseGenConfig.Audience != "Backend developers" { t.Errorf("audience = %q", p.CourseGenConfig.Audience) }
+if p.CourseGenConfig.DefaultMedia != "stub" { t.Errorf("default_media = %q", p.CourseGenConfig.DefaultMedia) }
+if len(p.CourseModules) != 2 { t.Fatalf("modules = %d", len(p.CourseModules)) }
+if p.TotalLessons != 3 { t.Errorf("total_lessons = %d", p.TotalLessons) }
+l1 := p.CourseModules[0].Lessons[0]
+if string(l1.VideoMode) != "stub" { t.Errorf("l1 video_mode = %q", l1.VideoMode) }
+if l1.VideoStubScript == "" { t.Error("l1 video_stub_script empty") }
+if len(result.Quizzes) != 1 { t.Fatalf("quizzes = %d", len(result.Quizzes)) }
+}
+
+func TestCourseTreeValidation(t *testing.T) {
+src := `
+course "Full Stack Bootcamp" {
+description "Complete full stack"
+instructor "Tech Lead"
+module "Frontend" {
+lesson "HTML" { content "<p>HTML</p>" is_free true }
+lesson "CSS" { content "<p>CSS</p>" }
+lesson "JS" { content "<p>JS</p>" }
+}
+module "Backend" {
+lesson "Node" { content "<p>Node</p>" }
+lesson "Express" { content "<p>Express</p>" }
+quiz "Backend Quiz" {
+pass_threshold 80
+max_attempts 2
+question "What is Node.js?" {
+type multiple_choice
+options ["Browser", "Runtime", "Framework", "Library"]
+answer 1
+}
+question "Explain middleware" {
+type short_answer
+answer "request processing pipeline"
+}
+}
+}
+module "DevOps" {
+lesson "Docker" { content "<p>Docker</p>" drip_days 14 }
+lesson "CICD" { content "<p>CI/CD</p>" is_draft true }
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_tree", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+p := result.Products[0]
+if len(p.CourseModules) != 3 { t.Fatalf("modules = %d", len(p.CourseModules)) }
+if p.TotalLessons != 7 { t.Errorf("total_lessons = %d, want 7", p.TotalLessons) }
+for i, mod := range p.CourseModules {
+if mod.Order != i+1 { t.Errorf("module %d order = %d", i, mod.Order) }
+}
+if len(result.Quizzes) != 1 { t.Fatalf("quizzes = %d", len(result.Quizzes)) }
+if len(result.Quizzes[0].Questions) != 2 { t.Errorf("questions = %d", len(result.Quizzes[0].Questions)) }
+if p.CourseModules[2].Lessons[0].DripDays != 14 { t.Error("drip_days wrong") }
+if !p.CourseModules[2].Lessons[1].IsDraft { t.Error("should be draft") }
+}
+
+func TestLessonWithoutVideo(t *testing.T) {
+src := `
+course "Text-Only Course" {
+description "No video content"
+instructor "Writer"
+default_media none
+module "Reading" {
+lesson "Chapter 1" {
+video_mode none
+content "<p>Text-only lesson</p>"
+content_markdown "# Chapter 1\n\nFull text."
+}
+lesson "Chapter 2" { content "<p>Another text lesson</p>" }
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_novid", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+p := result.Products[0]
+lessons := p.CourseModules[0].Lessons
+if len(lessons) != 2 { t.Fatalf("lessons = %d", len(lessons)) }
+if lessons[0].VideoURL != "" { t.Errorf("should have no video_url") }
+if string(lessons[0].VideoMode) != "none" { t.Errorf("video_mode = %q", lessons[0].VideoMode) }
+if lessons[0].ContentMarkdown == "" { t.Error("content_markdown empty") }
+if lessons[1].VideoURL != "" { t.Error("lesson 2 should have no video") }
+}
+
+func TestCourseRefResolution(t *testing.T) {
+src := `
+course "Referenced Course" {
+description "Gets referenced"
+instructor "Prof"
+module "M1" { lesson "L1" { content "<p>Content</p>" } }
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_ref", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+if len(result.Products) != 1 { t.Fatalf("products = %d", len(result.Products)) }
+if result.Products[0].PublicId == "" { t.Error("should have public_id") }
+if result.Products[0].ProductType != "course" { t.Errorf("type = %q", result.Products[0].ProductType) }
+}
+
+func TestPatchBasedEditing(t *testing.T) {
+src := `
+course "Patchable Course" {
+description "Supports editing"
+instructor "Editor"
+module "Module 1" {
+lesson "Original Lesson" {
+content "<p>Original content</p>"
+video_mode stub
+video_stub_script "Original script"
+}
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_patch", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+lesson := result.Products[0].CourseModules[0].Lessons[0]
+if lesson.Title != "Original Lesson" { t.Errorf("title = %q", lesson.Title) }
+if lesson.VideoStubScript != "Original script" { t.Errorf("stub = %q", lesson.VideoStubScript) }
+
+patch := pkgmodels.ContentPatch{
+TargetType: "lesson", TargetId: lesson.Slug, Status: "pending",
+Operations: []pkgmodels.PatchOperation{
+{Op: "replace", Path: "/modules/0/lessons/0/title", Value: "Updated"},
+{Op: "replace", Path: "/modules/0/lessons/0/content_html", Value: "<p>Updated</p>"},
+},
+}
+if len(patch.Operations) != 2 { t.Errorf("ops = %d", len(patch.Operations)) }
+if patch.Status != "pending" { t.Errorf("status = %q", patch.Status) }
+}
+
+func TestOutlineGeneration(t *testing.T) {
+src := `
+course "Generated Course" {
+description "AI generated"
+instructor "AI Teacher"
+audience "Beginners in data science"
+outcome "Perform basic data analysis"
+tone "Friendly"
+default_media stub
+extra_context "Focus on pandas"
+reference "https://example.com/python-data.txt"
+reference "https://example.com/pandas-guide.pdf"
+module "Python Basics" {
+lesson "Variables" {
+video_mode stub
+video_stub_script "Introduce Python variables"
+video_stub_description "Cover int, float, string, bool"
+content "<p>Variables</p>"
+}
+}
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+result := CompileScript(src, "sub_gen", bson.NewObjectId())
+if result.Diagnostics.HasErrors() {
+for _, d := range result.Diagnostics { t.Errorf("error: %v", d) }
+t.FailNow()
+}
+cfg := result.Products[0].CourseGenConfig
+if cfg == nil { t.Fatal("CourseGenConfig nil") }
+if cfg.Audience != "Beginners in data science" { t.Errorf("audience = %q", cfg.Audience) }
+if cfg.Tone != "Friendly" { t.Errorf("tone = %q", cfg.Tone) }
+if cfg.DefaultMedia != "stub" { t.Errorf("default_media = %q", cfg.DefaultMedia) }
+if cfg.ExtraContext != "Focus on pandas" { t.Errorf("extra_context = %q", cfg.ExtraContext) }
+if len(cfg.References) != 2 { t.Errorf("references = %d", len(cfg.References)) }
+lesson := result.Products[0].CourseModules[0].Lessons[0]
+if lesson.VideoStubDescription != "Cover int, float, string, bool" { t.Errorf("desc = %q", lesson.VideoStubDescription) }
+}
+
+func TestNewTokensRegistered(t *testing.T) {
+kws := map[string]TokenKind{
+"audience": TokAudience, "outcome": TokOutcome,
+"tone": TokTone, "default_media": TokDefaultMedia,
+}
+for kw, expected := range kws {
+if actual := LookupIdent(kw); actual != expected {
+t.Errorf("LookupIdent(%q) = %v, want %v", kw, actual, expected)
+}
+}
 }
