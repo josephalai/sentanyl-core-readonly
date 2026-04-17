@@ -30,6 +30,8 @@ type ScriptAST struct {
 	Products       []*ProductDeclNode
 	Offers         []*OfferDeclNode
 	Quizzes        []*QuizNode
+	// LMS course declarations (syntactic sugar)
+	Courses      []*CourseDeclNode
 	// Video Intelligence declarations
 	MediaDecls       []*MediaDeclNode
 	PlayerPresets    []*PlayerPresetDeclNode
@@ -567,9 +569,13 @@ type LessonNode struct {
 	Duration      string // "HH:MM:SS" format
 	ContentHTML   string
 	ContentGen    *LMSContentGenNode
-	IsFree        bool
-	IsDraft       bool
-	DripDays      int
+	IsFree               bool
+	IsDraft              bool
+	DripDays             int
+	VideoMode            string // "none", "stub", "uploaded"
+	VideoStubScript      string
+	VideoStubDescription string
+	ContentMarkdown      string
 }
 
 // LMSQuizNode represents a `quiz` block inside a module (LMS-specific, distinct from e-commerce QuizNode).
@@ -615,6 +621,43 @@ type CertificateNode struct {
 	NodeBase
 	CourseRef string // Product slug reference
 	Template  string // Certificate template identifier
+}
+
+// CourseDeclNode represents a `course` top-level declaration.
+// Syntactic sugar that compiles to a Product with type "course".
+type CourseDeclNode struct {
+	NodeBase
+	Name           string
+	Description    string
+	Instructor     string
+	ThumbnailURL   string
+	Status         string
+	DescriptionGen *DescriptionGenNode
+	Modules        []*ModuleNode
+	CertConfig     *CourseCertConfigNode
+	Audience       string
+	Outcome        string
+	Tone           string
+	ExtraContext   string
+	References     []string
+	DefaultMedia   string // "stub", "none", "uploaded"
+}
+
+// CourseCertConfigNode represents `certificate { ... }` inside a course.
+type CourseCertConfigNode struct {
+	NodeBase
+	Enabled      bool
+	TemplateName string
+	Title        string
+	LogoURL      string
+	AccentColor  string
+}
+
+// CourseRefNode represents a `course_ref("name")` reference used in projections.
+type CourseRefNode struct {
+	NodeBase
+	CourseName string
+	Projection string // optional field projection e.g. ".title", ".modules"
 }
 
 // ---------- Video Intelligence AST Nodes ----------

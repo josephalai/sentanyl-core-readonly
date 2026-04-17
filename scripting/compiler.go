@@ -180,6 +180,15 @@ func (c *Compiler) Compile() *CompileResult {
 		}
 	}
 
+	// Compile each course (sugar for product type=course)
+	for _, courseNode := range c.ast.Courses {
+		product := c.compileCourseDecl(courseNode)
+		if product != nil {
+			result.Products = append(result.Products, product)
+			c.productMap[courseNode.Name] = product
+		}
+	}
+
 	// Compile each offer (pricing + badge grants)
 	for _, offerNode := range c.ast.Offers {
 		offer := c.compileOffer(offerNode)
@@ -1711,7 +1720,56 @@ func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *pkgm
 		}
 	}
 
+	// Handle video stub fields
+	if node.VideoMode != "" {
+		lesson.VideoMode = pkgmodels.VideoMode(node.VideoMode)
+	}
+	if node.VideoStubScript != "" {
+		lesson.VideoStubScript = node.VideoStubScript
+	}
+	if node.VideoStubDescription != "" {
+		lesson.VideoStubDescription = node.VideoStubDescription
+	}
+	if node.ContentMarkdown != "" {
+		lesson.ContentMarkdown = node.ContentMarkdown
+	}
+
 	return lesson
+}
+
+// compileCourseDecl compiles a CourseDeclNode into a Product entity (syntactic sugar).
+func (c *Compiler) compileCourseDecl(node *CourseDeclNode) *pkgmodels.Product {
+	productNode := &ProductDeclNode{
+		NodeBase:       node.NodeBase,
+		Name:           node.Name,
+		ProductType:    "course",
+		Description:    node.Description,
+		Instructor:     node.Instructor,
+		ThumbnailURL:   node.ThumbnailURL,
+		Status:         node.Status,
+		DescriptionGen: node.DescriptionGen,
+		Modules:        node.Modules,
+	}
+	product := c.compileProduct(productNode)
+	if node.Audience != "" || node.Outcome != "" || node.Tone != "" || node.ExtraContext != "" || node.DefaultMedia != "" || len(node.References) > 0 {
+		product.CourseGenConfig = &pkgmodels.CourseGenConfig{
+			Audience:     node.Audience,
+			Outcome:      node.Outcome,
+			Tone:         node.Tone,
+			ExtraContext: node.ExtraContext,
+			DefaultMedia: node.DefaultMedia,
+			References:   node.References,
+		}
+	}
+	return product
+}
+
+// resolveCourseRef resolves a course_ref("name") to the course's PublicId.
+func (c *Compiler) resolveCourseRef(name string) string {
+	if product, ok := c.productMap[name]; ok {
+		return product.PublicId
+	}
+	return ""
 }
 
 // compileLMSQuiz compiles an LMSQuizNode into an LMSQuiz entity.

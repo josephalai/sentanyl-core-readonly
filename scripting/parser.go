@@ -59,6 +59,11 @@ func (p *Parser) Parse() (*ScriptAST, Diagnostics) {
 			if f != nil {
 				ast.Funnels = append(ast.Funnels, f)
 			}
+		case p.check(TokCourse):
+			cd := p.parseCourseDecl()
+			if cd != nil {
+				ast.Courses = append(ast.Courses, cd)
+			}
 		case p.check(TokProduct):
 			pd := p.parseProductDecl()
 			if pd != nil {
@@ -100,7 +105,7 @@ func (p *Parser) Parse() (*ScriptAST, Diagnostics) {
 				ast.MediaWebhookDecls = append(ast.MediaWebhookDecls, wh)
 			}
 		default:
-			p.errorf("expected 'story', 'funnel', 'site', 'product', 'offer', 'quiz', 'media', 'player_preset', 'channel', 'media_webhook', 'default', 'links', 'pattern', 'policy', 'data', 'scene_defaults', or 'enactment_defaults', got %s", p.cur().Kind)
+			p.errorf("expected 'story', 'funnel', 'site', 'course', 'product', 'offer', 'quiz', 'media', 'player_preset', 'channel', 'media_webhook', 'default', 'links', 'pattern', 'policy', 'data', 'scene_defaults', or 'enactment_defaults', got %s", p.cur().Kind)
 			p.advance()
 		}
 	}
@@ -216,7 +221,7 @@ func (p *Parser) isIdentLike() bool {
 		TokInstructor, TokLMSDuration, TokIsFree, TokIsDraft, TokDripDays,
 		TokContentGen, TokDescriptionGen, TokPassThreshold, TokMaxAttempts,
 		TokOptions, TokMultipleChoice, TokShortAnswer, TokCertificate, TokCourseRef,
-		TokCourse, TokDurationKw,
+		TokCourse, TokDurationKw, TokAudience, TokOutcome, TokTone, TokDefaultMedia,
 		TokMedia, TokPlayerPreset, TokChannel, TokChapter, TokTurnstile,
 		TokCTA, TokAnnotation, TokBadgeRule, TokMediaWebhook, TokMediaRef,
 		TokStartSec, TokEndSec, TokThreshold, TokOperator, TokEnabled,
@@ -2469,6 +2474,151 @@ func (p *Parser) parseProductDecl() *ProductDeclNode {
 	return node
 }
 
+// parseCourseDecl parses: course "Name" { description "..." instructor "..." module "..." { ... } ... }
+func (p *Parser) parseCourseDecl() *CourseDeclNode {
+	pos := p.cur().Pos
+	p.expect(TokCourse)
+	name := p.expectString()
+	node := &CourseDeclNode{NodeBase: NodeBase{Pos: pos}, Name: name}
+
+	p.expect(TokLBrace)
+	for !p.check(TokRBrace) && !p.atEnd() {
+		switch p.cur().Kind {
+		case TokDescription:
+			p.advance()
+			node.Description = p.expectString()
+		case TokInstructor:
+			p.advance()
+			node.Instructor = p.expectString()
+		case TokModule:
+			m := p.parseModule()
+			if m != nil {
+				node.Modules = append(node.Modules, m)
+			}
+		case TokDescriptionGen:
+			node.DescriptionGen = p.parseDescriptionGen()
+		case TokCertificate:
+			node.CertConfig = p.parseCourseCertConfig()
+		case TokReference:
+			p.advance()
+			node.References = append(node.References, p.expectString())
+		case TokAudience:
+			p.advance()
+			node.Audience = p.expectString()
+		case TokOutcome:
+			p.advance()
+			node.Outcome = p.expectString()
+		case TokTone:
+			p.advance()
+			node.Tone = p.expectString()
+		case TokDefaultMedia:
+			p.advance()
+			if p.check(TokString) {
+				node.DefaultMedia = p.expectString()
+			} else if p.isIdentLike() {
+				node.DefaultMedia = p.advanceIdentLike()
+			}
+		case TokTheme:
+			p.advance()
+			if p.check(TokString) {
+				node.ThumbnailURL = p.expectString()
+			} else if p.isIdentLike() {
+				node.ThumbnailURL = p.advanceIdentLike()
+			}
+		case TokIdent:
+			ident := p.cur().Literal
+			p.advance()
+			switch ident {
+			case "description":
+				node.Description = p.expectString()
+			case "instructor":
+				node.Instructor = p.expectString()
+			case "thumbnail":
+				if p.check(TokString) {
+					node.ThumbnailURL = p.expectString()
+				} else if p.isIdentLike() {
+					node.ThumbnailURL = p.advanceIdentLike()
+				}
+			case "status":
+				if p.check(TokString) {
+					node.Status = p.expectString()
+				} else if p.isIdentLike() {
+					node.Status = p.advanceIdentLike()
+				}
+			case "audience":
+				node.Audience = p.expectString()
+			case "outcome":
+				node.Outcome = p.expectString()
+			case "tone":
+				node.Tone = p.expectString()
+			case "extra_context":
+				node.ExtraContext = p.expectString()
+			case "default_media":
+				if p.check(TokString) {
+					node.DefaultMedia = p.expectString()
+				} else if p.isIdentLike() {
+					node.DefaultMedia = p.advanceIdentLike()
+				}
+			default:
+				p.errorf("unexpected identifier %q in course block", ident)
+			}
+		default:
+			p.errorf("unexpected token %s in course block", p.cur().Kind)
+			p.advance()
+		}
+	}
+	p.expect(TokRBrace)
+	return node
+}
+
+// parseCourseCertConfig parses: certificate { enabled true template_name "default" ... }
+func (p *Parser) parseCourseCertConfig() *CourseCertConfigNode {
+	pos := p.cur().Pos
+	p.expect(TokCertificate)
+	node := &CourseCertConfigNode{NodeBase: NodeBase{Pos: pos}}
+
+	p.expect(TokLBrace)
+	for !p.check(TokRBrace) && !p.atEnd() {
+		switch p.cur().Kind {
+		case TokEnabled:
+			p.advance()
+			if p.check(TokBool) || p.check(TokTrue) || p.check(TokFalse) {
+				node.Enabled = p.cur().Literal == "true"
+				p.advance()
+			} else {
+				node.Enabled = true
+			}
+		case TokIdent:
+			ident := p.cur().Literal
+			p.advance()
+			switch ident {
+			case "template_name":
+				node.TemplateName = p.expectString()
+			case "title":
+				node.Title = p.expectString()
+			case "logo_url":
+				node.LogoURL = p.expectString()
+			case "accent_color":
+				node.AccentColor = p.expectString()
+			case "enabled":
+				if p.check(TokBool) || p.check(TokTrue) || p.check(TokFalse) {
+					node.Enabled = p.cur().Literal == "true"
+					p.advance()
+				} else {
+					node.Enabled = true
+				}
+			default:
+				p.errorf("unexpected identifier %q in certificate config", ident)
+			}
+		default:
+			p.errorf("unexpected token %s in certificate config", p.cur().Kind)
+			p.advance()
+		}
+	}
+	p.expect(TokRBrace)
+	return node
+}
+
 // parseOfferDecl parses: offer "Name" { pricing_model one_time price 497.00 currency "usd" includes_product "..." grants_badge "..." on purchase { ... } }
 func (p *Parser) parseOfferDecl() *OfferDeclNode {
 	pos := p.cur().Pos
@@ -2994,6 +3144,25 @@ func (p *Parser) parseLesson() *LessonNode {
 		case TokDurationKw:
 			p.advance()
 			node.Duration = p.expectString()
+		case TokIdent:
+			ident := p.cur().Literal
+			p.advance()
+			switch ident {
+			case "video_mode":
+				if p.check(TokString) {
+					node.VideoMode = p.expectString()
+				} else if p.isIdentLike() {
+					node.VideoMode = p.advanceIdentLike()
+				}
+			case "video_stub_script":
+				node.VideoStubScript = p.expectString()
+			case "video_stub_description":
+				node.VideoStubDescription = p.expectString()
+			case "content_markdown":
+				node.ContentMarkdown = p.expectString()
+			default:
+				p.errorf("unexpected identifier %q in lesson block", ident)
+			}
 		default:
 			p.errorf("unexpected token %s in lesson block", p.cur().Kind)
 			p.advance()

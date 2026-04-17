@@ -275,6 +275,10 @@ const (
 	TokCourseRef     // course_ref
 	TokCourse        // course (product type identifier)
 	TokDurationKw    // duration (LMS lesson duration, alias for TokLMSDuration)
+	TokAudience      // audience
+	TokOutcome       // outcome
+	TokTone          // tone
+	TokDefaultMedia  // default_media
 
 	// Keywords — Video Intelligence
 	TokMedia         // media
@@ -557,6 +561,10 @@ var tokenNames = map[TokenKind]string{
 	TokRewatch:      "rewatch",
 	TokPosterURL:    "poster_url",
 	TokPlayerColor:  "player_color",
+	TokAudience:     "audience",
+	TokOutcome:      "outcome",
+	TokTone:         "tone",
+	TokDefaultMedia: "default_media",
 
 	// E-commerce & advanced funnel tokens
 	TokProduct:         "product",
@@ -782,6 +790,10 @@ var keywords = map[string]TokenKind{
 	"certificate":                    TokCertificate,
 	"course_ref":                     TokCourseRef,
 	"course":                         TokCourse,
+	"audience":                       TokAudience,
+	"outcome":                        TokOutcome,
+	"tone":                           TokTone,
+	"default_media":                  TokDefaultMedia,
 	"media":                          TokMedia,
 	"player_preset":                  TokPlayerPreset,
 	"channel":                        TokChannel,
