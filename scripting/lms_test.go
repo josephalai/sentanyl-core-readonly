@@ -1313,6 +1313,47 @@ if cfg.ExtraContext != "Focus on goroutines and channels" { t.Errorf("extra_cont
 if len(cfg.References) != 1 { t.Errorf("references = %d", len(cfg.References)) }
 }
 
+// TestGenerateMode_IsConfigOnly locks in the documented behavior: when a
+// course uses `mode generate` with no authored modules, the compiler only
+// emits a CourseGenConfig. It does NOT materialize modules/lessons or
+// create a GenerationJob — that is the responsibility of the HTTP
+// endpoints (POST /generate-outline, POST /generate-full) which read the
+// config and dispatch to GenerationService.
+func TestGenerateMode_IsConfigOnly(t *testing.T) {
+	src := `
+course "Generate Only" {
+description "Pure config"
+mode generate
+audience "devs"
+outcome "ship it"
+tone "concise"
+default_media stub
+}
+story "Minimal" {
+storyline "A" { enactment "B" { scene "C" { subject "t" body "t" from_email "a@b.com" from_name "A" reply_to "a@b.com" } } }
+}
+`
+	result := CompileScript(src, "sub_genonly", bson.NewObjectId())
+	if result.Diagnostics.HasErrors() {
+		for _, d := range result.Diagnostics {
+			t.Errorf("error: %v", d)
+		}
+		t.FailNow()
+	}
+	p := result.Products[0]
+
+	if p.CourseGenConfig == nil || p.CourseGenConfig.Mode != "generate" {
+		t.Fatalf("expected CourseGenConfig.Mode=generate, got %+v", p.CourseGenConfig)
+	}
+	if len(p.CourseModules) != 0 {
+		t.Errorf("expected 0 materialized modules under mode=generate, got %d: %v",
+			len(p.CourseModules), p.CourseModules)
+	}
+	if p.TotalLessons != 0 {
+		t.Errorf("expected TotalLessons=0 under config-only generate, got %d", p.TotalLessons)
+	}
+}
+
 func TestAuthoredModeCourse(t *testing.T) {
 src := `
 course "Manual Course" {
