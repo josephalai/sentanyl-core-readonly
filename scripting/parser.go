@@ -1021,6 +1021,16 @@ func (p *Parser) parseScene() *SceneNode {
 			node.Tags = p.parseStringList()
 		case TokCertificate:
 			node.Certificate = p.parseCertificate()
+		case TokContextPack:
+			p.advance()
+			packID := p.expectString()
+			node.ContextPackRefs = append(node.ContextPackRefs, packID)
+		case TokSubjectGen:
+			p.advance()
+			node.SubjectGen = p.expectString()
+		case TokBodyGen:
+			p.advance()
+			node.BodyGen = p.expectString()
 		default:
 			p.errorf("unexpected token %s in scene block", p.cur().Kind)
 			p.advance()

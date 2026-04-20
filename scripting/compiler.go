@@ -649,6 +649,15 @@ func (c *Compiler) compileScene(storyNode *StoryNode, slNode *StorylineNode, enN
 		content.GivenVars = node.Vars
 	}
 
+	// EmailGenConfig — store AI generation instructions and context pack refs.
+	if node.SubjectGen != "" || node.BodyGen != "" || len(node.ContextPackRefs) > 0 {
+		content.EmailGenConfig = &pkgmodels.EmailGenConfig{
+			SubjectInstruction: node.SubjectGen,
+			BodyInstruction:    node.BodyGen,
+			ContextPackRefs:    node.ContextPackRefs,
+		}
+	}
+
 	// TemplateName — create a Template entity with the given name so that the
 	// platform can look it up during email compilation.
 	if node.TemplateName != "" {

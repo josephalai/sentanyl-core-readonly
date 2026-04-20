@@ -68,6 +68,9 @@ func main() {
 		tenantAPI.GET("/domains", routes.HandleListTenantDomains)
 		tenantAPI.DELETE("/domains/:id", routes.HandleDeleteTenantDomain)
 		tenantAPI.POST("/domains/:id/verify", routes.HandleVerifyTenantDomain)
+
+		// Context packs, brand profile, attribute schema
+		routes.RegisterContextPackRoutes(tenantAPI)
 	}
 
 	// Sending domain management (uses subscriber_id auth).

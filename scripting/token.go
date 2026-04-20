@@ -305,6 +305,11 @@ const (
 	TokPosterURL     // poster_url
 	TokPlayerColor   // player_color
 
+	// Keywords — context packs & email AI generation
+	TokContextPack // context_pack
+	TokSubjectGen  // subject_gen
+	TokBodyGen     // body_gen
+
 	// Keywords — misc
 	TokTrue
 	TokFalse
@@ -501,6 +506,10 @@ var tokenNames = map[TokenKind]string{
 	TokAutoplay:  "autoplay",
 	TokSourceURL: "source_url",
 	TokPercent:   "%",
+
+	TokContextPack: "context_pack",
+	TokSubjectGen:  "subject_gen",
+	TokBodyGen:     "body_gen",
 
 	TokTrue:  "true",
 	TokFalse: "false",
@@ -819,6 +828,9 @@ var keywords = map[string]TokenKind{
 	"rewatch":                        TokRewatch,
 	"poster_url":                     TokPosterURL,
 	"player_color":                   TokPlayerColor,
+	"context_pack":                   TokContextPack,
+	"subject_gen":                    TokSubjectGen,
+	"body_gen":                       TokBodyGen,
 }
 
 // LookupIdent returns the keyword TokenKind for ident, or TokIdent if it is

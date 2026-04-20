@@ -92,16 +92,19 @@ type EnactmentNode struct {
 // SceneNode represents a `scene` declaration.
 type SceneNode struct {
 	NodeBase
-	Name         string
-	Subject      string
-	Body         string
-	FromEmail    string
-	FromName     string
-	ReplyTo      string
-	TemplateName string // reference to a template by name
-	Vars         map[string]string
-	Tags         []string
-	Certificate  *CertificateNode // Certificate generation action (LMS)
+	Name            string
+	Subject         string
+	Body            string
+	FromEmail       string
+	FromName        string
+	ReplyTo         string
+	TemplateName    string // reference to a template by name
+	Vars            map[string]string
+	Tags            []string
+	Certificate     *CertificateNode // Certificate generation action (LMS)
+	ContextPackRefs []string         // context_pack "pack-id" directives
+	SubjectGen      string           // subject_gen "instruction" for AI-generated subject
+	BodyGen         string           // body_gen "instruction" for AI-generated body
 }
 
 // ---------- Badge / Condition Nodes ----------
