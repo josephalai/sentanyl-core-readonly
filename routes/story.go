@@ -433,10 +433,17 @@ func handleCreateMessage(c *gin.Context) {
 		Content        *pkgmodels.MessageContent `json:"content"`
 		MessageContent *pkgmodels.MessageContent `json:"message_content"`
 	}
-	c.ShouldBindJSON(&raw)
+	if err := c.ShouldBindJSON(&raw); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
 	content := raw.Content
 	if content == nil {
 		content = raw.MessageContent
+	}
+	if content == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message content is required"})
+		return
 	}
 	item := pkgmodels.Message{
 		SubscriberId: auth.GetTenantID(c),
