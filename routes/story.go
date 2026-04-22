@@ -238,8 +238,34 @@ func handleStopStory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddStorylineToStory(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveStorylineFromStory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddStorylineToStory(c *gin.Context) {
+	storyId := c.Param("id")
+	storylineId := c.Param("storylineId")
+	var sl pkgmodels.Storyline
+	if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": storylineId}).One(&sl); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "storyline not found"})
+		return
+	}
+	db.GetCollection(pkgmodels.StoryCollection).Update(
+		bson.M{"public_id": storyId},
+		bson.M{"$push": bson.M{"storylines": sl}},
+	)
+	var updated pkgmodels.Story
+	db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": storyId}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"story": updated})
+}
+
+func handleRemoveStorylineFromStory(c *gin.Context) {
+	storyId := c.Param("id")
+	storylineId := c.Param("storylineId")
+	db.GetCollection(pkgmodels.StoryCollection).Update(
+		bson.M{"public_id": storyId},
+		bson.M{"$pull": bson.M{"storylines": bson.M{"public_id": storylineId}}},
+	)
+	var updated pkgmodels.Story
+	db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": storyId}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"story": updated})
+}
 
 // ─── Storylines ───────────────────────────────────────────
 
@@ -295,8 +321,37 @@ func handleStopStoryline(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddEnactmentToStoryline(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveEnactmentFromStoryline(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddEnactmentToStoryline(c *gin.Context) {
+	storylineId := c.Param("id")
+	var body struct {
+		EnactmentId string `json:"enactment_id"`
+	}
+	c.ShouldBindJSON(&body)
+	var en pkgmodels.Enactment
+	if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": body.EnactmentId}).One(&en); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "enactment not found"})
+		return
+	}
+	db.GetCollection(pkgmodels.StorylineCollection).Update(
+		bson.M{"public_id": storylineId},
+		bson.M{"$push": bson.M{"acts": en}},
+	)
+	var updated pkgmodels.Storyline
+	db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": storylineId}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"storyline": updated})
+}
+
+func handleRemoveEnactmentFromStoryline(c *gin.Context) {
+	storylineId := c.Param("id")
+	enactmentId := c.Param("enactmentId")
+	db.GetCollection(pkgmodels.StorylineCollection).Update(
+		bson.M{"public_id": storylineId},
+		bson.M{"$pull": bson.M{"acts": bson.M{"public_id": enactmentId}}},
+	)
+	var updated pkgmodels.Storyline
+	db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": storylineId}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"storyline": updated})
+}
 
 // ─── Enactments ───────────────────────────────────────────
 
@@ -352,10 +407,73 @@ func handleStopEnactment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddTriggerToEnactment(c *gin.Context)      { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveTriggerFromEnactment(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleSetEnactmentScene(c *gin.Context)           { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveEnactmentScene(c *gin.Context)        { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddTriggerToEnactment(c *gin.Context) {
+	enactmentId := c.Param("id")
+	var body struct {
+		TriggerId string `json:"trigger_id"`
+	}
+	c.ShouldBindJSON(&body)
+	var tr pkgmodels.Trigger
+	if err := db.GetCollection(pkgmodels.TriggerCollection).Find(bson.M{"public_id": body.TriggerId}).One(&tr); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "trigger not found"})
+		return
+	}
+	eventKey := tr.TriggerType
+	if eventKey == "" {
+		eventKey = "default"
+	}
+	db.GetCollection(pkgmodels.EnactmentCollection).Update(
+		bson.M{"public_id": enactmentId},
+		bson.M{"$push": bson.M{"trigger." + eventKey: tr}},
+	)
+	var updated pkgmodels.Enactment
+	db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": enactmentId}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"enactment": updated})
+}
+
+func handleRemoveTriggerFromEnactment(c *gin.Context) {
+	enactmentId := c.Param("id")
+	triggerId := c.Param("triggerId")
+	// Pull from all event keys in the trigger map
+	var en pkgmodels.Enactment
+	if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": enactmentId}).One(&en); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "enactment not found"})
+		return
+	}
+	for key := range en.OnEvent {
+		db.GetCollection(pkgmodels.EnactmentCollection).Update(
+			bson.M{"public_id": enactmentId},
+			bson.M{"$pull": bson.M{"trigger." + key: bson.M{"public_id": triggerId}}},
+		)
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func handleSetEnactmentScene(c *gin.Context) {
+	enactmentId := c.Param("id")
+	sceneId := c.Param("sceneId")
+	var scene pkgmodels.Scene
+	if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": sceneId}).One(&scene); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "scene not found"})
+		return
+	}
+	db.GetCollection(pkgmodels.EnactmentCollection).Update(
+		bson.M{"public_id": enactmentId},
+		bson.M{"$set": bson.M{"send_scene": scene}},
+	)
+	var updated pkgmodels.Enactment
+	db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": enactmentId}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"enactment": updated})
+}
+
+func handleRemoveEnactmentScene(c *gin.Context) {
+	enactmentId := c.Param("id")
+	db.GetCollection(pkgmodels.EnactmentCollection).Update(
+		bson.M{"public_id": enactmentId},
+		bson.M{"$unset": bson.M{"send_scene": ""}},
+	)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
 // ─── Scenes ───────────────────────────────────────────────
 
@@ -401,10 +519,32 @@ func handleDeleteScene(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddTagToScene(c *gin.Context)      { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveTagFromScene(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleSetSceneMessage(c *gin.Context)     { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveSceneMessage(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddTagToScene(c *gin.Context) {
+	var body struct{ TagId string `json:"tag_id"` }
+	c.ShouldBindJSON(&body)
+	var tag pkgmodels.Tag
+	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": body.TagId}).One(&tag); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"}); return
+	}
+	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id")}, bson.M{"$push": bson.M{"tags": tag}})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+func handleRemoveTagFromScene(c *gin.Context) {
+	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id")}, bson.M{"$pull": bson.M{"tags": bson.M{"public_id": c.Param("tagId")}}})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+func handleSetSceneMessage(c *gin.Context) {
+	var msg pkgmodels.Message
+	if err := db.GetCollection(pkgmodels.MessageCollection).Find(bson.M{"public_id": c.Param("messageId")}).One(&msg); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"}); return
+	}
+	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id")}, bson.M{"$set": bson.M{"message": msg}})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+func handleRemoveSceneMessage(c *gin.Context) {
+	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id")}, bson.M{"$unset": bson.M{"message": ""}})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
 // ─── Messages ─────────────────────────────────────────────
 
@@ -469,8 +609,20 @@ func handleDeleteMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddTagToMessage(c *gin.Context)     { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveTagFromMessage(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddTagToMessage(c *gin.Context) {
+	var body struct{ TagId string `json:"tag_id"` }
+	c.ShouldBindJSON(&body)
+	var tag pkgmodels.Tag
+	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": body.TagId}).One(&tag); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"}); return
+	}
+	db.GetCollection(pkgmodels.MessageCollection).Update(bson.M{"public_id": c.Param("id")}, bson.M{"$push": bson.M{"vars": tag}})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+func handleRemoveTagFromMessage(c *gin.Context) {
+	db.GetCollection(pkgmodels.MessageCollection).Update(bson.M{"public_id": c.Param("id")}, bson.M{"$pull": bson.M{"vars": bson.M{"public_id": c.Param("tagId")}}})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
 // ─── Message Content ──────────────────────────────────────
 
