@@ -71,9 +71,32 @@ func main() {
 
 		// Context packs, brand profile, attribute schema
 		routes.RegisterContextPackRoutes(tenantAPI)
+
+		// Sending domain management (JWT-authenticated, /sending-domain prefix avoids conflict with tenant vanity /domains).
+		tenantAPI.POST("/sending-domain", routes.HandleAddDomain)
+		tenantAPI.GET("/sending-domains", routes.HandleGetDomains)
+		tenantAPI.GET("/sending-domain/:domainId", routes.HandleGetDomain)
+		tenantAPI.DELETE("/sending-domain/:domainId", routes.HandleDeleteDomain)
+		tenantAPI.POST("/sending-domain/:domainId/verify-dns", routes.HandleVerifyDNS)
+		tenantAPI.POST("/sending-domain/:domainId/test-send", routes.HandleTestSend)
+		tenantAPI.GET("/sending-domain/:domainId/test-send-status", routes.HandleGetTestSendStatus)
+		tenantAPI.GET("/sending-domain/:domainId/stats", routes.HandleGetDomainStats)
+		tenantAPI.GET("/sending-domain/:domainId/reputation", routes.HandleGetDomainReputation)
+		tenantAPI.GET("/sending-domain/:domainId/warming", routes.HandleGetDomainWarming)
+		tenantAPI.GET("/sending-domain/:domainId/bounces", routes.HandleGetDomainBounces)
+		tenantAPI.POST("/sending-domain/:domainId/pause", routes.HandlePauseDomain)
+		tenantAPI.POST("/sending-domain/:domainId/resume", routes.HandleResumeDomain)
+
+		// Story builder — stories, storylines, enactments, scenes, messages,
+		// triggers, actions, badges, tags, users, email lists, stats, etc.
+		routes.RegisterStoryRoutes(tenantAPI)
 	}
 
-	// Sending domain management (uses subscriber_id auth).
+	// Public endpoint: end-user/subscriber registration (no tenant JWT).
+	r.POST("/api/register/user", routes.HandleRegisterUser)
+
+	// Sending domain management — moved to tenantAPI above under /sending-domain.
+	// Legacy bare paths kept as aliases so existing DNS records/bookmarks still work.
 	r.POST("/api/domain", routes.HandleAddDomain)
 	r.GET("/api/domains", routes.HandleGetDomains)
 	r.GET("/api/domain/:domainId", routes.HandleGetDomain)
@@ -90,10 +113,6 @@ func main() {
 
 	// Script compiler (SentanylScript DSL).
 	routes.RegisterScriptRoutes(r)
-
-	// Story builder — stories, storylines, enactments, scenes, messages,
-	// triggers, actions, badges, tags, users, email lists, stats, etc.
-	routes.RegisterStoryRoutes(r)
 
 	// Story execution engine — internal endpoint + scheduler goroutine.
 	routes.RegisterStoryEngineRoutes(r)

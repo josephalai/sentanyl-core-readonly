@@ -7,184 +7,173 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
 
+	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/utils"
 )
 
-// RegisterStoryRoutes wires all story-builder CRUD endpoints onto the root engine.
-func RegisterStoryRoutes(r *gin.Engine) {
+// RegisterStoryRoutes wires all story-builder CRUD endpoints onto a router group (expects /api/tenant prefix with auth middleware).
+func RegisterStoryRoutes(r gin.IRouter) {
 	// Stories
-	r.GET("/api/stories", handleGetStories)
-	r.GET("/api/story/:id", handleGetStory)
-	r.POST("/api/story/", handleCreateStory)
-	r.PUT("/api/story/:id", handleUpdateStory)
-	r.DELETE("/api/story/:id", handleDeleteStory)
-	r.DELETE("/api/stories", handleDeleteAllStories)
-	r.DELETE("/api/story/:id/purge", handlePurgeStory)
-	r.PUT("/api/story/:id/start", handleStartStory)
-	r.PUT("/api/story/:id/stop", handleStopStory)
-	r.POST("/api/story/:id/storylines/:storylineId", handleAddStorylineToStory)
-	r.DELETE("/api/story/:id/storylines/:storylineId", handleRemoveStorylineFromStory)
+	r.GET("/stories", handleGetStories)
+	r.GET("/story/:id", handleGetStory)
+	r.POST("/story/", handleCreateStory)
+	r.PUT("/story/:id", handleUpdateStory)
+	r.DELETE("/story/:id", handleDeleteStory)
+	r.DELETE("/stories", handleDeleteAllStories)
+	r.DELETE("/story/:id/purge", handlePurgeStory)
+	r.PUT("/story/:id/start", handleStartStory)
+	r.PUT("/story/:id/stop", handleStopStory)
+	r.POST("/story/:id/storylines/:storylineId", handleAddStorylineToStory)
+	r.DELETE("/story/:id/storylines/:storylineId", handleRemoveStorylineFromStory)
 
 	// Storylines
-	r.GET("/api/storylines", handleGetStorylines)
-	r.GET("/api/storyline/:id", handleGetStoryline)
-	r.POST("/api/storyline/", handleCreateStoryline)
-	r.PUT("/api/storyline/:id", handleUpdateStoryline)
-	r.DELETE("/api/storyline/:id", handleDeleteStoryline)
-	r.PUT("/api/storyline/:id/start", handleStartStoryline)
-	r.PUT("/api/storyline/:id/stop", handleStopStoryline)
-	r.POST("/api/storyline/:id/enactments", handleAddEnactmentToStoryline)
-	r.DELETE("/api/storyline/:id/enactments/:enactmentId", handleRemoveEnactmentFromStoryline)
+	r.GET("/storylines", handleGetStorylines)
+	r.GET("/storyline/:id", handleGetStoryline)
+	r.POST("/storyline/", handleCreateStoryline)
+	r.PUT("/storyline/:id", handleUpdateStoryline)
+	r.DELETE("/storyline/:id", handleDeleteStoryline)
+	r.PUT("/storyline/:id/start", handleStartStoryline)
+	r.PUT("/storyline/:id/stop", handleStopStoryline)
+	r.POST("/storyline/:id/enactments", handleAddEnactmentToStoryline)
+	r.DELETE("/storyline/:id/enactments/:enactmentId", handleRemoveEnactmentFromStoryline)
 
 	// Enactments
-	r.GET("/api/enactments", handleGetEnactments)
-	r.GET("/api/enactment/:id", handleGetEnactment)
-	r.POST("/api/enactment/", handleCreateEnactment)
-	r.PUT("/api/enactment/:id", handleUpdateEnactment)
-	r.DELETE("/api/enactment/:id", handleDeleteEnactment)
-	r.PUT("/api/enactment/:id/start", handleStartEnactment)
-	r.PUT("/api/enactment/:id/stop", handleStopEnactment)
-	r.POST("/api/enactment/:id/trigger", handleAddTriggerToEnactment)
-	r.DELETE("/api/enactment/:id/trigger/:triggerId", handleRemoveTriggerFromEnactment)
-	r.POST("/api/enactment/:id/scene/:sceneId", handleSetEnactmentScene)
-	r.DELETE("/api/enactment/:id/scene", handleRemoveEnactmentScene)
+	r.GET("/enactments", handleGetEnactments)
+	r.GET("/enactment/:id", handleGetEnactment)
+	r.POST("/enactment/", handleCreateEnactment)
+	r.PUT("/enactment/:id", handleUpdateEnactment)
+	r.DELETE("/enactment/:id", handleDeleteEnactment)
+	r.PUT("/enactment/:id/start", handleStartEnactment)
+	r.PUT("/enactment/:id/stop", handleStopEnactment)
+	r.POST("/enactment/:id/trigger", handleAddTriggerToEnactment)
+	r.DELETE("/enactment/:id/trigger/:triggerId", handleRemoveTriggerFromEnactment)
+	r.POST("/enactment/:id/scene/:sceneId", handleSetEnactmentScene)
+	r.DELETE("/enactment/:id/scene", handleRemoveEnactmentScene)
 
 	// Scenes
-	r.GET("/api/scenes", handleGetScenes)
-	r.GET("/api/scene/:id", handleGetScene)
-	r.POST("/api/scene/", handleCreateScene)
-	r.PUT("/api/scene/:id", handleUpdateScene)
-	r.DELETE("/api/scene/:id", handleDeleteScene)
-	r.POST("/api/scene/:id/tag", handleAddTagToScene)
-	r.DELETE("/api/scene/:id/tag/:tagId", handleRemoveTagFromScene)
-	r.POST("/api/scene/:id/message/:messageId", handleSetSceneMessage)
-	r.DELETE("/api/scene/:id/message", handleRemoveSceneMessage)
+	r.GET("/scenes", handleGetScenes)
+	r.GET("/scene/:id", handleGetScene)
+	r.POST("/scene/", handleCreateScene)
+	r.PUT("/scene/:id", handleUpdateScene)
+	r.DELETE("/scene/:id", handleDeleteScene)
+	r.POST("/scene/:id/tag", handleAddTagToScene)
+	r.DELETE("/scene/:id/tag/:tagId", handleRemoveTagFromScene)
+	r.POST("/scene/:id/message/:messageId", handleSetSceneMessage)
+	r.DELETE("/scene/:id/message", handleRemoveSceneMessage)
 
 	// Messages
-	r.GET("/api/messages", handleGetMessages)
-	r.GET("/api/message/:id", handleGetMessage)
-	r.POST("/api/message/", handleCreateMessage)
-	r.PUT("/api/message/:id", handleUpdateMessage)
-	r.DELETE("/api/message/:id", handleDeleteMessage)
-	r.POST("/api/message/:id/tag", handleAddTagToMessage)
-	r.DELETE("/api/message/:id/tag/:tagId", handleRemoveTagFromMessage)
+	r.GET("/messages", handleGetMessages)
+	r.GET("/message/:id", handleGetMessage)
+	r.POST("/message/", handleCreateMessage)
+	r.PUT("/message/:id", handleUpdateMessage)
+	r.DELETE("/message/:id", handleDeleteMessage)
+	r.POST("/message/:id/tag", handleAddTagToMessage)
+	r.DELETE("/message/:id/tag/:tagId", handleRemoveTagFromMessage)
 
 	// Message Content
-	r.GET("/api/message_contents", handleGetMessageContents)
-	r.GET("/api/message_content/:id", handleGetMessageContent)
-	r.POST("/api/message_content/", handleCreateMessageContent)
-	r.PUT("/api/message_content/:id", handleUpdateMessageContent)
-	r.DELETE("/api/message_content/:id", handleDeleteMessageContent)
+	r.GET("/message_contents", handleGetMessageContents)
+	r.GET("/message_content/:id", handleGetMessageContent)
+	r.POST("/message_content/", handleCreateMessageContent)
+	r.PUT("/message_content/:id", handleUpdateMessageContent)
+	r.DELETE("/message_content/:id", handleDeleteMessageContent)
 
 	// Triggers
-	r.GET("/api/triggers", handleGetTriggers)
-	r.GET("/api/trigger/:id", handleGetTrigger)
-	r.POST("/api/trigger/", handleCreateTrigger)
-	r.PUT("/api/trigger/:id", handleUpdateTrigger)
-	r.DELETE("/api/trigger/:id", handleDeleteTrigger)
+	r.GET("/triggers", handleGetTriggers)
+	r.GET("/trigger/:id", handleGetTrigger)
+	r.POST("/trigger/", handleCreateTrigger)
+	r.PUT("/trigger/:id", handleUpdateTrigger)
+	r.DELETE("/trigger/:id", handleDeleteTrigger)
 
 	// Actions
-	r.GET("/api/actions", handleGetActions)
-	r.GET("/api/action/:id", handleGetAction)
-	r.POST("/api/action/", handleCreateAction)
-	r.PUT("/api/action/:id", handleUpdateAction)
-	r.DELETE("/api/action/:id", handleDeleteAction)
+	r.GET("/actions", handleGetActions)
+	r.GET("/action/:id", handleGetAction)
+	r.POST("/action/", handleCreateAction)
+	r.PUT("/action/:id", handleUpdateAction)
+	r.DELETE("/action/:id", handleDeleteAction)
 
 	// Badges
-	r.GET("/api/badges", handleGetBadges)
-	r.GET("/api/badge/:id", handleGetBadge)
-	r.POST("/api/badge/", handleCreateBadge)
-	r.PUT("/api/badge/:id", handleUpdateBadge)
-	r.DELETE("/api/badge/:id", handleDeleteBadge)
-	r.PUT("/api/user_badge/user/:userId/badge/:badgeId", handleAssignBadgeToUser)
-	r.DELETE("/api/user_badge/user/:userId/badge/:badgeId", handleRemoveBadgeFromUser)
+	r.GET("/badges", handleGetBadges)
+	r.GET("/badge/:id", handleGetBadge)
+	r.POST("/badge/", handleCreateBadge)
+	r.PUT("/badge/:id", handleUpdateBadge)
+	r.DELETE("/badge/:id", handleDeleteBadge)
+	r.PUT("/user_badge/user/:userId/badge/:badgeId", handleAssignBadgeToUser)
+	r.DELETE("/user_badge/user/:userId/badge/:badgeId", handleRemoveBadgeFromUser)
 
 	// Tags
-	r.GET("/api/tags", handleGetTags)
-	r.GET("/api/tag/:id", handleGetTag)
-	r.POST("/api/tag/", handleCreateTag)
-	r.PUT("/api/tag/:id", handleUpdateTag)
-	r.DELETE("/api/tag/:id", handleDeleteTag)
+	r.GET("/tags", handleGetTags)
+	r.GET("/tag/:id", handleGetTag)
+	r.POST("/tag/", handleCreateTag)
+	r.PUT("/tag/:id", handleUpdateTag)
+	r.DELETE("/tag/:id", handleDeleteTag)
 
 	// Template Variables
-	r.GET("/api/template_variables", handleGetTemplateVariables)
-	r.GET("/api/template_variable/:id", handleGetTemplateVariable)
-	r.POST("/api/template_variable/", handleCreateTemplateVariable)
-	r.PUT("/api/template_variable/:id", handleUpdateTemplateVariable)
-	r.DELETE("/api/template_variable/:id", handleDeleteTemplateVariable)
+	r.GET("/template_variables", handleGetTemplateVariables)
+	r.GET("/template_variable/:id", handleGetTemplateVariable)
+	r.POST("/template_variable/", handleCreateTemplateVariable)
+	r.PUT("/template_variable/:id", handleUpdateTemplateVariable)
+	r.DELETE("/template_variable/:id", handleDeleteTemplateVariable)
 
-	// Users / CRM
-	r.GET("/api/users", handleGetUsers)
-	r.GET("/api/user/:id", handleGetUser)
-	r.POST("/api/user/", handleCreateUser)
-	r.PUT("/api/user/:id", handleUpdateUser)
-	r.DELETE("/api/user/:id", handleDeleteUser)
-	r.DELETE("/api/users", handleDeleteAllUsers)
-	r.GET("/api/user/:id/detail", handleGetUserDetail)
-	r.POST("/api/user/:id/story/:storyId", handleAddUserToStory)
-	r.POST("/api/register/user", handleRegisterUser)
+	// Users / CRM (tenant view of their subscribers)
+	r.GET("/users", handleGetUsers)
+	r.GET("/user/:id", handleGetUser)
+	r.POST("/user/", handleCreateUser)
+	r.PUT("/user/:id", handleUpdateUser)
+	r.DELETE("/user/:id", handleDeleteUser)
+	r.DELETE("/users", handleDeleteAllUsers)
+	r.GET("/user/:id/detail", handleGetUserDetail)
+	r.POST("/user/:id/story/:storyId", handleAddUserToStory)
 
 	// Email lists
-	r.GET("/api/creator/lists", handleGetEmailLists)
-	r.GET("/api/creator/list/:id", handleGetEmailList)
-	r.POST("/api/creator/list", handleCreateEmailList)
-	r.DELETE("/api/creator/list/:id", handleDeleteEmailList)
+	r.GET("/creator/lists", handleGetEmailLists)
+	r.GET("/creator/list/:id", handleGetEmailList)
+	r.POST("/creator/list", handleCreateEmailList)
+	r.DELETE("/creator/list/:id", handleDeleteEmailList)
 
 	// Email queue / hot triggers
-	r.GET("/api/emails/pending", handleGetPendingEmails)
-	r.GET("/api/hot-triggers", handleGetHotTriggers)
+	r.GET("/emails/pending", handleGetPendingEmails)
+	r.GET("/hot-triggers", handleGetHotTriggers)
 
-	// Stats (stubs — returns empty but won't 404)
-	r.GET("/api/stats/", handleStatsOverview)
-	r.GET("/api/stats/story", handleStatsStub)
-	r.GET("/api/stats/story/:id", handleStatsStub)
-	r.GET("/api/stats/storyline", handleStatsStub)
-	r.GET("/api/stats/storyline/:id", handleStatsStub)
-	r.GET("/api/stats/enactment", handleStatsStub)
-	r.GET("/api/stats/enactment/:id", handleStatsStub)
-	r.GET("/api/stats/message", handleStatsStub)
-	r.GET("/api/stats/message/:id", handleStatsStub)
-	r.GET("/api/stats/badge", handleStatsStub)
-	r.GET("/api/stats/badge/:id", handleStatsStub)
-	r.GET("/api/stats/trigger", handleStatsStub)
-	r.GET("/api/stats/trigger/:id", handleStatsStub)
-	r.GET("/api/stats/email", handleStatsStub)
-	r.GET("/api/stats/email/:id", handleStatsStub)
-	r.GET("/api/stats/user", handleStatsStub)
-	r.GET("/api/stats/user/:id", handleStatsStub)
-	r.GET("/api/stats/link", handleStatsStub)
-	r.GET("/api/stats/link/:id", handleStatsStub)
-	r.GET("/api/stats/spam", handleStatsStub)
-	r.GET("/api/stats/fail", handleStatsStub)
-	r.GET("/api/stats/validate", handleStatsStub)
-	r.GET("/api/stats/ab", handleStatsStub)
-	r.GET("/api/stats/ab/:id", handleStatsStub)
+	// Stats
+	r.GET("/stats/", handleStatsOverview)
+	r.GET("/stats/story", handleStatsStub)
+	r.GET("/stats/story/:id", handleStatsStub)
+	r.GET("/stats/storyline", handleStatsStub)
+	r.GET("/stats/storyline/:id", handleStatsStub)
+	r.GET("/stats/enactment", handleStatsStub)
+	r.GET("/stats/enactment/:id", handleStatsStub)
+	r.GET("/stats/message", handleStatsStub)
+	r.GET("/stats/message/:id", handleStatsStub)
+	r.GET("/stats/badge", handleStatsStub)
+	r.GET("/stats/badge/:id", handleStatsStub)
+	r.GET("/stats/trigger", handleStatsStub)
+	r.GET("/stats/trigger/:id", handleStatsStub)
+	r.GET("/stats/email", handleStatsStub)
+	r.GET("/stats/email/:id", handleStatsStub)
+	r.GET("/stats/user", handleStatsStub)
+	r.GET("/stats/user/:id", handleStatsStub)
+	r.GET("/stats/link", handleStatsStub)
+	r.GET("/stats/link/:id", handleStatsStub)
+	r.GET("/stats/spam", handleStatsStub)
+	r.GET("/stats/fail", handleStatsStub)
+	r.GET("/stats/validate", handleStatsStub)
+	r.GET("/stats/ab", handleStatsStub)
+	r.GET("/stats/ab/:id", handleStatsStub)
 
 	// Admin
-	r.POST("/api/admin/reset", handleAdminReset)
+	r.POST("/admin/reset", handleAdminReset)
 }
 
 // ─── Helpers ──────────────────────────────────────────────
-
-func subID(c *gin.Context) string {
-	if s := c.Query("subscriber_id"); s != "" {
-		return s
-	}
-	var body struct {
-		SubscriberID string `json:"subscriber_id"`
-	}
-	_ = c.ShouldBindJSON(&body)
-	return body.SubscriberID
-}
 
 func now() *time.Time { t := time.Now(); return &t }
 
 // ─── Stories ──────────────────────────────────────────────
 
 func handleGetStories(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Story
 	db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
 	if items == nil {
@@ -208,6 +197,7 @@ func handleCreateStory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid data"})
 		return
 	}
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -228,9 +218,8 @@ func handleDeleteStory(c *gin.Context) {
 }
 
 func handleDeleteAllStories(c *gin.Context) {
-	var body struct{ SubscriberID string `json:"subscriber_id"` }
-	c.ShouldBindJSON(&body)
-	db.GetCollection(pkgmodels.StoryCollection).UpdateAll(bson.M{"subscriber_id": body.SubscriberID}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
+	sid := auth.GetTenantID(c)
+	db.GetCollection(pkgmodels.StoryCollection).UpdateAll(bson.M{"subscriber_id": sid}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -249,18 +238,13 @@ func handleStopStory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddStorylineToStory(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-}
-
-func handleRemoveStorylineFromStory(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-}
+func handleAddStorylineToStory(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleRemoveStorylineFromStory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 
 // ─── Storylines ───────────────────────────────────────────
 
 func handleGetStorylines(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Storyline
 	db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
 	if items == nil {
@@ -281,6 +265,7 @@ func handleGetStoryline(c *gin.Context) {
 func handleCreateStoryline(c *gin.Context) {
 	var item pkgmodels.Storyline
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -310,13 +295,13 @@ func handleStopStoryline(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAddEnactmentToStoryline(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddEnactmentToStoryline(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 func handleRemoveEnactmentFromStoryline(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 
 // ─── Enactments ───────────────────────────────────────────
 
 func handleGetEnactments(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Enactment
 	db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
 	if items == nil {
@@ -337,6 +322,7 @@ func handleGetEnactment(c *gin.Context) {
 func handleCreateEnactment(c *gin.Context) {
 	var item pkgmodels.Enactment
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -374,7 +360,7 @@ func handleRemoveEnactmentScene(c *gin.Context)        { c.JSON(http.StatusOK, g
 // ─── Scenes ───────────────────────────────────────────────
 
 func handleGetScenes(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Scene
 	db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
 	if items == nil {
@@ -395,6 +381,7 @@ func handleGetScene(c *gin.Context) {
 func handleCreateScene(c *gin.Context) {
 	var item pkgmodels.Scene
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -422,7 +409,7 @@ func handleRemoveSceneMessage(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"st
 // ─── Messages ─────────────────────────────────────────────
 
 func handleGetMessages(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Message
 	db.GetCollection(pkgmodels.MessageCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
 	if items == nil {
@@ -441,10 +428,8 @@ func handleGetMessage(c *gin.Context) {
 }
 
 func handleCreateMessage(c *gin.Context) {
-	// Accept both "content" (canonical) and "message_content" (frontend alias).
 	var raw struct {
-		SubscriberId   string                  `json:"subscriber_id"`
-		Name           string                  `json:"name"`
+		Name           string                    `json:"name"`
 		Content        *pkgmodels.MessageContent `json:"content"`
 		MessageContent *pkgmodels.MessageContent `json:"message_content"`
 	}
@@ -454,7 +439,7 @@ func handleCreateMessage(c *gin.Context) {
 		content = raw.MessageContent
 	}
 	item := pkgmodels.Message{
-		SubscriberId: raw.SubscriberId,
+		SubscriberId: auth.GetTenantID(c),
 		Name:         raw.Name,
 		Content:      content,
 	}
@@ -483,7 +468,7 @@ func handleRemoveTagFromMessage(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"s
 // ─── Message Content ──────────────────────────────────────
 
 func handleGetMessageContents(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.MessageContent
 	db.GetCollection(pkgmodels.MessageContentCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -504,6 +489,7 @@ func handleGetMessageContent(c *gin.Context) {
 func handleCreateMessageContent(c *gin.Context) {
 	var item pkgmodels.MessageContent
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -526,7 +512,7 @@ func handleDeleteMessageContent(c *gin.Context) {
 // ─── Triggers ─────────────────────────────────────────────
 
 func handleGetTriggers(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Trigger
 	db.GetCollection(pkgmodels.TriggerCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -547,6 +533,7 @@ func handleGetTrigger(c *gin.Context) {
 func handleCreateTrigger(c *gin.Context) {
 	var item pkgmodels.Trigger
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -569,7 +556,7 @@ func handleDeleteTrigger(c *gin.Context) {
 // ─── Actions ──────────────────────────────────────────────
 
 func handleGetActions(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Action
 	db.GetCollection(pkgmodels.ActionCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -590,6 +577,7 @@ func handleGetAction(c *gin.Context) {
 func handleCreateAction(c *gin.Context) {
 	var item pkgmodels.Action
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -612,7 +600,7 @@ func handleDeleteAction(c *gin.Context) {
 // ─── Badges ───────────────────────────────────────────────
 
 func handleGetBadges(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Badge
 	db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -633,6 +621,7 @@ func handleGetBadge(c *gin.Context) {
 func handleCreateBadge(c *gin.Context) {
 	var item pkgmodels.Badge
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -652,13 +641,13 @@ func handleDeleteBadge(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAssignBadgeToUser(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAssignBadgeToUser(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 func handleRemoveBadgeFromUser(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 
 // ─── Tags ─────────────────────────────────────────────────
 
 func handleGetTags(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Tag
 	db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -679,6 +668,7 @@ func handleGetTag(c *gin.Context) {
 func handleCreateTag(c *gin.Context) {
 	var item pkgmodels.Tag
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -701,7 +691,7 @@ func handleDeleteTag(c *gin.Context) {
 // ─── Template Variables ───────────────────────────────────
 
 func handleGetTemplateVariables(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []bson.M
 	db.GetCollection(pkgmodels.TemplateVariablesCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -724,6 +714,7 @@ func handleCreateTemplateVariable(c *gin.Context) {
 	c.ShouldBindJSON(&item)
 	item["_id"] = bson.NewObjectId()
 	item["public_id"] = utils.GeneratePublicId()
+	item["subscriber_id"] = auth.GetTenantID(c)
 	db.GetCollection(pkgmodels.TemplateVariablesCollection).Insert(item)
 	c.JSON(http.StatusOK, gin.H{"template_variable": item})
 }
@@ -743,7 +734,7 @@ func handleDeleteTemplateVariable(c *gin.Context) {
 // ─── Users ────────────────────────────────────────────────
 
 func handleGetUsers(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.User
 	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
@@ -764,6 +755,7 @@ func handleGetUser(c *gin.Context) {
 func handleCreateUser(c *gin.Context) {
 	var item pkgmodels.User
 	c.ShouldBindJSON(&item)
+	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -784,9 +776,8 @@ func handleDeleteUser(c *gin.Context) {
 }
 
 func handleDeleteAllUsers(c *gin.Context) {
-	var body struct{ SubscriberID string `json:"subscriber_id"` }
-	c.ShouldBindJSON(&body)
-	db.GetCollection(pkgmodels.UserCollection).UpdateAll(bson.M{"subscriber_id": body.SubscriberID}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
+	sid := auth.GetTenantID(c)
+	db.GetCollection(pkgmodels.UserCollection).UpdateAll(bson.M{"subscriber_id": sid}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -796,9 +787,10 @@ func handleGetUserDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"user": item, "campaign": nil, "hot_triggers": []interface{}{}, "pending_emails": []interface{}{}})
 }
 
-func handleAddUserToStory(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func handleAddUserToStory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 
-func handleRegisterUser(c *gin.Context) {
+// HandleRegisterUser registers a new end-user/subscriber (public endpoint, no tenant JWT needed).
+func HandleRegisterUser(c *gin.Context) {
 	var item pkgmodels.User
 	c.ShouldBindJSON(&item)
 	item.Id = bson.NewObjectId()
@@ -811,7 +803,7 @@ func handleRegisterUser(c *gin.Context) {
 // ─── Email Lists ──────────────────────────────────────────
 
 func handleGetEmailLists(c *gin.Context) {
-	sid := c.Query("subscriber_id")
+	sid := auth.GetTenantID(c)
 	var items []pkgmodels.EmailList
 	db.GetCollection(pkgmodels.EmailListCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
 	if items == nil {
