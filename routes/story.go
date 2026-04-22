@@ -172,8 +172,8 @@ func now() *time.Time { t := time.Now(); return &t }
 
 // ─── Stories ──────────────────────────────────────────────
 
-// hydrateStory re-fetches each embedded storyline and each enactment within it
-// so that scenes/triggers added after initial linking are always reflected.
+// hydrateStory re-fetches the full tree: storylines → enactments → scenes
+// so anything added/updated after initial embedding is always current.
 func hydrateStory(story *pkgmodels.Story) {
 	for i, sl := range story.Storylines {
 		var freshSL pkgmodels.Storyline
@@ -182,9 +182,24 @@ func hydrateStory(story *pkgmodels.Story) {
 		}
 		for j, en := range freshSL.Acts {
 			var freshEn pkgmodels.Enactment
-			if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": en.PublicId}).One(&freshEn); err == nil {
-				freshSL.Acts[j] = &freshEn
+			if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": en.PublicId}).One(&freshEn); err != nil {
+				continue
 			}
+			// Re-fetch send_scene so messages set after scene was linked are visible
+			if freshEn.SendScene != nil && freshEn.SendScene.PublicId != "" {
+				var freshScene pkgmodels.Scene
+				if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": freshEn.SendScene.PublicId}).One(&freshScene); err == nil {
+					freshEn.SendScene = &freshScene
+				}
+			}
+			// Re-fetch multi-scene send_scenes as well
+			for k, sc := range freshEn.SendScenes {
+				var freshScene pkgmodels.Scene
+				if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": sc.PublicId}).One(&freshScene); err == nil {
+					freshEn.SendScenes[k] = &freshScene
+				}
+			}
+			freshSL.Acts[j] = &freshEn
 		}
 		story.Storylines[i] = &freshSL
 	}
