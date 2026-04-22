@@ -172,6 +172,24 @@ func now() *time.Time { t := time.Now(); return &t }
 
 // ─── Stories ──────────────────────────────────────────────
 
+// hydrateStory re-fetches each embedded storyline and each enactment within it
+// so that scenes/triggers added after initial linking are always reflected.
+func hydrateStory(story *pkgmodels.Story) {
+	for i, sl := range story.Storylines {
+		var freshSL pkgmodels.Storyline
+		if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId}).One(&freshSL); err != nil {
+			continue
+		}
+		for j, en := range freshSL.Acts {
+			var freshEn pkgmodels.Enactment
+			if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": en.PublicId}).One(&freshEn); err == nil {
+				freshSL.Acts[j] = &freshEn
+			}
+		}
+		story.Storylines[i] = &freshSL
+	}
+}
+
 func handleGetStories(c *gin.Context) {
 	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Story
@@ -179,13 +197,8 @@ func handleGetStories(c *gin.Context) {
 	if items == nil {
 		items = []pkgmodels.Story{}
 	}
-	for i, story := range items {
-		for j, sl := range story.Storylines {
-			var fresh pkgmodels.Storyline
-			if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId}).One(&fresh); err == nil {
-				items[i].Storylines[j] = &fresh
-			}
-		}
+	for i := range items {
+		hydrateStory(&items[i])
 	}
 	c.JSON(http.StatusOK, gin.H{"stories": items})
 }
@@ -196,14 +209,7 @@ func handleGetStory(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "story not found"})
 		return
 	}
-	// Re-hydrate embedded storylines from the canonical storylines collection so
-	// enactments (acts) added after the storyline was first linked are reflected.
-	for i, sl := range item.Storylines {
-		var fresh pkgmodels.Storyline
-		if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId}).One(&fresh); err == nil {
-			item.Storylines[i] = &fresh
-		}
-	}
+	hydrateStory(&item)
 	c.JSON(http.StatusOK, gin.H{"story": item})
 }
 
