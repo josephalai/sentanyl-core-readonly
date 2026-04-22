@@ -441,8 +441,23 @@ func handleGetMessage(c *gin.Context) {
 }
 
 func handleCreateMessage(c *gin.Context) {
-	var item pkgmodels.Message
-	c.ShouldBindJSON(&item)
+	// Accept both "content" (canonical) and "message_content" (frontend alias).
+	var raw struct {
+		SubscriberId   string                  `json:"subscriber_id"`
+		Name           string                  `json:"name"`
+		Content        *pkgmodels.MessageContent `json:"content"`
+		MessageContent *pkgmodels.MessageContent `json:"message_content"`
+	}
+	c.ShouldBindJSON(&raw)
+	content := raw.Content
+	if content == nil {
+		content = raw.MessageContent
+	}
+	item := pkgmodels.Message{
+		SubscriberId: raw.SubscriberId,
+		Name:         raw.Name,
+		Content:      content,
+	}
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
