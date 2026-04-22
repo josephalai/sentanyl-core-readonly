@@ -179,6 +179,14 @@ func handleGetStories(c *gin.Context) {
 	if items == nil {
 		items = []pkgmodels.Story{}
 	}
+	for i, story := range items {
+		for j, sl := range story.Storylines {
+			var fresh pkgmodels.Storyline
+			if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId}).One(&fresh); err == nil {
+				items[i].Storylines[j] = &fresh
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"stories": items})
 }
 
@@ -187,6 +195,14 @@ func handleGetStory(c *gin.Context) {
 	if err := db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": c.Param("id")}).One(&item); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "story not found"})
 		return
+	}
+	// Re-hydrate embedded storylines from the canonical storylines collection so
+	// enactments (acts) added after the storyline was first linked are reflected.
+	for i, sl := range item.Storylines {
+		var fresh pkgmodels.Storyline
+		if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId}).One(&fresh); err == nil {
+			item.Storylines[i] = &fresh
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"story": item})
 }
