@@ -56,6 +56,9 @@ func main() {
 	r.POST("/api/customer/login", routes.HandleCustomerLogin)
 	r.POST("/api/customer/set-password", routes.HandleCustomerSetPassword)
 
+	// Stripe Connect OAuth callback (public — auth is via the state token).
+	r.GET("/api/tenant/stripe/oauth/callback", routes.HandleStripeConnectCallback)
+
 	// Protected tenant routes (require JWT).
 	tenantAPI := r.Group("/api/tenant")
 	tenantAPI.Use(auth.RequireTenantAuth())
@@ -63,6 +66,10 @@ func main() {
 		tenantAPI.GET("/profile", routes.HandleGetTenantProfile)
 		tenantAPI.PUT("/settings", routes.HandleUpdateTenantSettings)
 		tenantAPI.DELETE("/reset", routes.HandleTenantResetAllData)
+
+		// Stripe Connect OAuth initiate + disconnect.
+		tenantAPI.GET("/stripe/connect", routes.HandleStripeConnectInitiate)
+		tenantAPI.DELETE("/stripe/connect", routes.HandleStripeConnectDisconnect)
 
 		// Tenant custom domains
 		tenantAPI.POST("/domains", routes.HandleAddTenantDomain)
