@@ -54,6 +54,7 @@ func main() {
 	r.POST("/api/tenant/register", routes.HandleTenantRegister)
 	r.POST("/api/tenant/login", routes.HandleTenantLogin)
 	r.POST("/api/customer/login", routes.HandleCustomerLogin)
+	r.POST("/api/customer/set-password", routes.HandleCustomerSetPassword)
 
 	// Protected tenant routes (require JWT).
 	tenantAPI := r.Group("/api/tenant")

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
@@ -185,6 +186,88 @@ func HandleCustomerLogin(c *gin.Context) {
 				"first": contact.Name.First,
 				"last":  contact.Name.Last,
 			},
+		},
+	})
+}
+
+// HandleCustomerSetPassword consumes a password_reset_token and sets the
+// Contact's password, then issues a customer JWT. The tenant is resolved from
+// the request Host (same path HandleCustomerLogin uses).
+func HandleCustomerSetPassword(c *gin.Context) {
+	var req struct {
+		Token    string `json:"token" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token and password are required"})
+		return
+	}
+	if len(req.Password) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters"})
+		return
+	}
+
+	hostname := c.Request.Host
+	if forwarded := c.GetHeader("X-Forwarded-Host"); forwarded != "" {
+		hostname = forwarded
+	}
+
+	var tenantDomain models.TenantDomain
+	err := db.GetCollection(models.DomainCollection).Find(bson.M{
+		"hostname":              hostname,
+		"timestamps.deleted_at": nil,
+	}).One(&tenantDomain)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		return
+	}
+
+	var contact models.User
+	err = db.GetCollection(models.UserCollection).Find(bson.M{
+		"tenant_id":            tenantDomain.TenantID,
+		"password_reset_token": req.Token,
+	}).One(&contact)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+		return
+	}
+	if contact.PasswordResetExpires == nil || time.Now().After(*contact.PasswordResetExpires) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+		return
+	}
+
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		log.Println("Error hashing password:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set password"})
+		return
+	}
+
+	err = db.GetCollection(models.UserCollection).Update(
+		bson.M{"_id": contact.Id},
+		bson.M{
+			"$set":   bson.M{"password_hash": hash, "timestamps.updated_at": time.Now()},
+			"$unset": bson.M{"password_reset_token": "", "password_reset_expires": ""},
+		},
+	)
+	if err != nil {
+		log.Println("Error saving password:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set password"})
+		return
+	}
+
+	token, err := auth.GenerateCustomerToken(&contact, tenantDomain.TenantID)
+	if err != nil {
+		log.Println("Error generating customer token:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"contact": gin.H{
+			"id":    contact.Id.Hex(),
+			"email": string(contact.Email),
 		},
 	})
 }
