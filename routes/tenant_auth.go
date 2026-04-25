@@ -358,13 +358,15 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 	}
 
 	var req struct {
-		BusinessName        string `json:"business_name"`
-		StripeSecretKey     string `json:"stripe_secret_key"`
-		StripePublicKey     string `json:"stripe_public_key"`
-		StripeWebhookSecret string `json:"stripe_webhook_secret"`
-		MailgunAPIKey       string `json:"mailgun_api_key"`
-		MailgunDomain       string `json:"mailgun_domain"`
-		BrevoAPIKey         string `json:"brevo_api_key"`
+		BusinessName               string `json:"business_name"`
+		StripeSecretKey            string `json:"stripe_secret_key"`
+		StripePublicKey            string `json:"stripe_public_key"`
+		StripeWebhookSecret        string `json:"stripe_webhook_secret"`
+		MailgunAPIKey              string `json:"mailgun_api_key"`
+		MailgunDomain              string `json:"mailgun_domain"`
+		BrevoAPIKey                string `json:"brevo_api_key"`
+		CertificatesDefaultEnabled *bool  `json:"certificates_default_enabled,omitempty"`
+		CertificateDefaultTemplate *string `json:"certificate_default_template,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -392,6 +394,12 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 	}
 	if req.BrevoAPIKey != "" {
 		update["brevo_api_key"] = req.BrevoAPIKey
+	}
+	if req.CertificatesDefaultEnabled != nil {
+		update["certificates_default_enabled"] = *req.CertificatesDefaultEnabled
+	}
+	if req.CertificateDefaultTemplate != nil {
+		update["certificate_default_template"] = *req.CertificateDefaultTemplate
 	}
 
 	if len(update) == 0 {
