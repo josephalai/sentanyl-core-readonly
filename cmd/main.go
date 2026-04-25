@@ -12,6 +12,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/config"
 	"github.com/josephalai/sentanyl/pkg/db"
 	httputil "github.com/josephalai/sentanyl/pkg/http"
+	"github.com/josephalai/sentanyl/pkg/storage"
 )
 
 func main() {
@@ -42,8 +43,20 @@ func main() {
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")
 	bridge := routes.NewServiceBridge(lmsURL, marketingURL)
 
-	// Start the hydrator worker (stub for now).
-	h := hydrator.New(bridge)
+	// Start the hydrator worker. Cert + funnel PDFs are uploaded to GCS via
+	// the shared storage provider; if GCS init fails (missing creds in dev),
+	// the hydrator runs but PDF jobs surface a clear "GCS not configured"
+	// error instead of silently writing to ephemeral disk.
+	gcsBucket := envOrDefault("GCS_BUCKET", "sendhero-videos")
+	gcsProject := envOrDefault("GCP_PROJECT_ID", "sendhero")
+	var gcsProvider storage.StorageProvider
+	if p, err := storage.NewGCSProvider(gcsProject); err != nil {
+		log.Printf("[Core] GCS provider init failed (PDF rendering will fail until configured): %v", err)
+	} else {
+		gcsProvider = p
+		defer p.Close()
+	}
+	h := hydrator.New(bridge, gcsProvider, gcsBucket)
 	go h.Start()
 
 	// Set up Gin router.
@@ -76,6 +89,7 @@ func main() {
 		tenantAPI.GET("/domains", routes.HandleListTenantDomains)
 		tenantAPI.DELETE("/domains/:id", routes.HandleDeleteTenantDomain)
 		tenantAPI.POST("/domains/:id/verify", routes.HandleVerifyTenantDomain)
+		tenantAPI.POST("/domains/adopt", routes.HandleAdoptTenantDomain)
 
 		// Context packs, brand profile, attribute schema
 		routes.RegisterContextPackRoutes(tenantAPI)

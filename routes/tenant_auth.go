@@ -325,18 +325,23 @@ func HandleGetTenantProfile(c *gin.Context) {
 		return
 	}
 
+	certsDefault := false
+	if tenant.CertificatesDefaultEnabled != nil {
+		certsDefault = *tenant.CertificatesDefaultEnabled
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":                         tenant.Id.Hex(),
-		"business_name":              tenant.BusinessName,
-		"subscription_status":        tenant.SubscriptionStatus,
-		"stripe_public_key":          tenant.StripePublicKey,
-		"has_stripe":                 tenant.StripeSecretKey != "" || tenant.StripeConnectAccountID != "",
-		"has_webhook_secret":         tenant.StripeWebhookSecret != "",
-		"has_stripe_connect":         tenant.StripeConnectAccountID != "",
-		"stripe_connect_account_id":  tenant.StripeConnectAccountID,
-		"stripe_webhook_url":         fmt.Sprintf("%s/api/marketing/stripe/webhook?tenant_id=%s", publicAPIBase(), tenant.Id.Hex()),
-		"has_mailgun":                tenant.MailgunAPIKey != "",
-		"has_brevo":                  tenant.BrevoAPIKey != "",
+		"id":                            tenant.Id.Hex(),
+		"business_name":                 tenant.BusinessName,
+		"subscription_status":           tenant.SubscriptionStatus,
+		"stripe_public_key":             tenant.StripePublicKey,
+		"has_stripe":                    tenant.StripeSecretKey != "" || tenant.StripeConnectAccountID != "",
+		"has_webhook_secret":            tenant.StripeWebhookSecret != "",
+		"has_stripe_connect":            tenant.StripeConnectAccountID != "",
+		"stripe_connect_account_id":     tenant.StripeConnectAccountID,
+		"stripe_webhook_url":            fmt.Sprintf("%s/api/marketing/stripe/webhook?tenant_id=%s", publicAPIBase(), tenant.Id.Hex()),
+		"has_mailgun":                   tenant.MailgunAPIKey != "",
+		"has_brevo":                     tenant.BrevoAPIKey != "",
+		"certificates_default_enabled":  certsDefault,
 	})
 }
 

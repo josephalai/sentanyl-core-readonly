@@ -20,6 +20,7 @@ import (
 "github.com/josephalai/sentanyl/core-service/routes"
 "github.com/josephalai/sentanyl/pkg/db"
 pkgmodels "github.com/josephalai/sentanyl/pkg/models"
+"github.com/josephalai/sentanyl/pkg/storage"
 )
 
 // HydratorInterval controls how often the AI hydrator checks for pending content.
@@ -30,15 +31,20 @@ var pdfServiceURL = "http://localhost:9774"
 
 // Hydrator coordinates background AI content generation jobs.
 type Hydrator struct {
-Bridge *routes.ServiceBridge
+Bridge   *routes.ServiceBridge
+Storage  storage.StorageProvider
+GCSBucket string
 }
 
-// New creates a Hydrator that delegates cross-service writes via bridge.
-func New(bridge *routes.ServiceBridge) *Hydrator {
+// New creates a Hydrator that delegates cross-service writes via bridge and
+// uploads generated PDFs (cert + funnel assets) to GCS via storeProvider.
+// If storeProvider is nil, PDF jobs will fail with a clear "GCS not
+// configured" error rather than silently writing to ephemeral disk.
+func New(bridge *routes.ServiceBridge, storeProvider storage.StorageProvider, gcsBucket string) *Hydrator {
 if u := os.Getenv("PDF_SERVICE_URL"); u != "" {
 pdfServiceURL = u
 }
-return &Hydrator{Bridge: bridge}
+return &Hydrator{Bridge: bridge, Storage: storeProvider, GCSBucket: gcsBucket}
 }
 
 // Start launches the AI content hydration background worker.
@@ -107,6 +113,7 @@ PDFConfig *pdfConfig    `bson:"pdf_config"`
 type asset struct {
 Id        bson.ObjectId `bson:"_id"`
 PublicId  string        `bson:"public_id"`
+TenantID  bson.ObjectId `bson:"tenant_id"`
 FileName  string        `bson:"file_name"`
 GenConfig *genConfig    `bson:"gen_config"`
 }
@@ -177,11 +184,14 @@ DescriptionGenConfig *descGenConfig `bson:"description_gen_config"`
 type certificate struct {
 Id          bson.ObjectId `bson:"_id"`
 PublicId    string        `bson:"public_id"`
+TenantID    bson.ObjectId `bson:"tenant_id"`
+ProductID   bson.ObjectId `bson:"product_id"`
 ContactName string        `bson:"contact_name"`
 CourseTitle string        `bson:"course_title"`
 CompletedAt time.Time     `bson:"completed_at"`
 Template    string        `bson:"template"`
 GenStatus   string        `bson:"gen_status"`
+Locale      string        `bson:"locale"`
 }
 
 // ---------- Processor functions ----------
@@ -297,11 +307,26 @@ fileName := a.FileName
 if fileName == "" {
 fileName = a.GenConfig.AssetType + "-" + a.PublicId + ".pdf"
 }
-localPath := "/tmp/sentanyl-assets/" + fileName
-if mkErr := os.MkdirAll("/tmp/sentanyl-assets", 0755); mkErr == nil {
-_ = os.WriteFile(localPath, pdf, 0644)
+if h.Storage == nil {
+db.GetCollection(pkgmodels.AssetCollection).UpdateId(a.Id, bson.M{
+"$set": bson.M{
+"gen_config.status":    "failed",
+"gen_config.error_msg": "GCS not configured (set GCP_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS)",
+},
+})
+continue
 }
-fileURL := "/assets/generated/" + fileName
+objectPath := fmt.Sprintf("%s/assets/%s", a.TenantID.Hex(), fileName)
+fileURL, upErr := h.Storage.UploadObject(h.GCSBucket, objectPath, "application/pdf", bytes.NewReader(pdf))
+if upErr != nil {
+db.GetCollection(pkgmodels.AssetCollection).UpdateId(a.Id, bson.M{
+"$set": bson.M{
+"gen_config.status":    "failed",
+"gen_config.error_msg": "GCS upload failed: " + upErr.Error(),
+},
+})
+continue
+}
 now := time.Now()
 db.GetCollection(pkgmodels.AssetCollection).UpdateId(a.Id, bson.M{
 "$set": bson.M{
@@ -512,27 +537,31 @@ if err != nil || len(certs) == 0 {
 return
 }
 apiKey := getGeminiKey()
-if apiKey == "" {
-return
-}
-log.Printf("[Hydrator] Found %d pending certificates", len(certs))
+log.Printf("[Hydrator] Found %d pending certificates (ai=%v)", len(certs), apiKey != "")
 for _, cert := range certs {
 now := time.Now()
 db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
 "$set": bson.M{"gen_status": "processing", "timestamps.updated_at": now},
 })
+var htmlContent string
+if apiKey != "" {
 userPrompt, systemPrompt := buildCertificatePrompt(&cert)
-htmlContent, err := callGeminiAPIWithSystem(apiKey, userPrompt, systemPrompt)
-if err != nil {
-db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
-"$set": bson.M{"gen_status": "failed", "gen_error_msg": "AI generation failed: " + err.Error()},
-})
-continue
+generated, genErr := callGeminiAPIWithSystem(apiKey, userPrompt, systemPrompt)
+if genErr != nil {
+log.Printf("[Hydrator] cert %s: AI failed (%v) — using deterministic template", cert.PublicId, genErr)
+htmlContent = buildCertificateHTMLFallback(&cert)
+} else {
+htmlContent = generated
+}
+} else {
+htmlContent = buildCertificateHTMLFallback(&cert)
 }
 htmlContent = stripUnsafeHTML(htmlContent)
-pdfURL := pdfServiceURL + "/generate"
-pdfReqBody, _ := json.Marshal(map[string]string{"html": htmlContent})
-pdfResp, err := http.Post(pdfURL, "application/json", bytes.NewReader(pdfReqBody))
+pdfReqBody, _ := json.Marshal(map[string]string{
+"html":  htmlContent,
+"title": cert.CourseTitle,
+})
+pdfResp, err := http.Post(pdfServiceURL+"/from-html", "application/json", bytes.NewReader(pdfReqBody))
 if err != nil {
 db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
 "$set": bson.M{"gen_status": "failed", "gen_error_msg": "PDF service error: " + err.Error()},
@@ -540,25 +569,42 @@ db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
 continue
 }
 if pdfResp.StatusCode != http.StatusOK {
+errBody, _ := io.ReadAll(pdfResp.Body)
 pdfResp.Body.Close()
 db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
-"$set": bson.M{"gen_status": "failed", "gen_error_msg": fmt.Sprintf("PDF service returned %d", pdfResp.StatusCode)},
+"$set": bson.M{"gen_status": "failed", "gen_error_msg": fmt.Sprintf("PDF service returned %d: %s", pdfResp.StatusCode, string(errBody))},
 })
 continue
 }
-var pdfResult struct {
-URL string `json:"url"`
-}
-json.NewDecoder(pdfResp.Body).Decode(&pdfResult)
+pdfBytes, readErr := io.ReadAll(pdfResp.Body)
 pdfResp.Body.Close()
-issuedAt := time.Now()
+if readErr != nil || len(pdfBytes) == 0 {
+db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
+"$set": bson.M{"gen_status": "failed", "gen_error_msg": "empty PDF body"},
+})
+continue
+}
+if h.Storage == nil {
+db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
+"$set": bson.M{"gen_status": "failed", "gen_error_msg": "GCS not configured (set GCP_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS)"},
+})
+continue
+}
+objectPath := fmt.Sprintf("%s/certs/cert_%s.pdf", cert.TenantID.Hex(), cert.PublicId)
+publicURL, upErr := h.Storage.UploadObject(h.GCSBucket, objectPath, "application/pdf", bytes.NewReader(pdfBytes))
+if upErr != nil {
+db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
+"$set": bson.M{"gen_status": "failed", "gen_error_msg": "GCS upload failed: " + upErr.Error()},
+})
+continue
+}
+completedAt := time.Now()
 db.GetCollection(pkgmodels.CertificateCollection).UpdateId(cert.Id, bson.M{
 "$set": bson.M{
-"asset_url":             pdfResult.URL,
+"asset_url":             publicURL,
 "gen_status":            "completed",
 "gen_error_msg":         "",
-"issued_at":             issuedAt,
-"timestamps.updated_at": issuedAt,
+"timestamps.updated_at": completedAt,
 },
 })
 }
@@ -797,7 +843,78 @@ product.Name, product.InstructorName, moduleSummary, instruction,
 return userPrompt, systemPrompt
 }
 
+// certStrings holds the user-facing UI strings used in cert templates +
+// prompts. Built-in translations cover the locales the platform actively
+// supports; unknown locales fall back to English. Add a locale by appending
+// a row — keep keys in lockstep across all entries.
+type certStrings struct {
+EyebrowCompletion   string
+LineCertifies       string
+LineCompleted       string
+LineOnDate          string
+LabelCertificateID  string
+PromptLanguageHint  string
+}
+
+var certStringTable = map[string]certStrings{
+"en": {
+EyebrowCompletion:  "Certificate of Completion",
+LineCertifies:      "This certifies that",
+LineCompleted:      "has successfully completed",
+LineOnDate:         "on",
+LabelCertificateID: "Certificate ID",
+PromptLanguageHint: "Render all user-facing strings in English.",
+},
+"es": {
+EyebrowCompletion:  "Certificado de Finalización",
+LineCertifies:      "Esto certifica que",
+LineCompleted:      "ha completado con éxito",
+LineOnDate:         "el",
+LabelCertificateID: "ID del certificado",
+PromptLanguageHint: "Render all user-facing strings in Spanish.",
+},
+"pt": {
+EyebrowCompletion:  "Certificado de Conclusão",
+LineCertifies:      "Isto certifica que",
+LineCompleted:      "concluiu com sucesso",
+LineOnDate:         "em",
+LabelCertificateID: "ID do certificado",
+PromptLanguageHint: "Render all user-facing strings in Portuguese.",
+},
+"fr": {
+EyebrowCompletion:  "Certificat de Réussite",
+LineCertifies:      "Ceci certifie que",
+LineCompleted:      "a complété avec succès",
+LineOnDate:         "le",
+LabelCertificateID: "Identifiant du certificat",
+PromptLanguageHint: "Render all user-facing strings in French.",
+},
+"de": {
+EyebrowCompletion:  "Abschlusszertifikat",
+LineCertifies:      "Dies bestätigt, dass",
+LineCompleted:      "erfolgreich abgeschlossen hat",
+LineOnDate:         "am",
+LabelCertificateID: "Zertifikat-ID",
+PromptLanguageHint: "Render all user-facing strings in German.",
+},
+}
+
+// pickCertStrings resolves the cert UI string set for a locale, with BCP-47
+// fallback (es-MX → es → en).
+func pickCertStrings(locale string) certStrings {
+if s, ok := certStringTable[locale]; ok {
+return s
+}
+if i := strings.Index(locale, "-"); i > 0 {
+if s, ok := certStringTable[locale[:i]]; ok {
+return s
+}
+}
+return certStringTable["en"]
+}
+
 func buildCertificatePrompt(cert *certificate) (string, string) {
+strs := pickCertStrings(cert.Locale)
 systemPrompt := `You are a certificate designer for online learning platforms.
 You produce elegant, professional certificate HTML suitable for PDF rendering.
 
@@ -806,7 +923,8 @@ Rules:
 - Use a formal, professional design with borders and elegant typography
 - Page size: A4 landscape (297mm x 210mm)
 - Do NOT include <script>, <form>, or interactive elements
-- Do NOT use external fonts or images — use system fonts (Georgia, Times New Roman, Arial)`
+- Do NOT use external fonts or images — use system fonts (Georgia, Times New Roman, Arial)
+- ` + strs.PromptLanguageHint
 
 completedDate := cert.CompletedAt.Format("January 2, 2006")
 tmpl := cert.Template
@@ -825,6 +943,59 @@ The certificate should feel premium and worth framing.`,
 cert.ContactName, cert.CourseTitle, completedDate, cert.PublicId, tmpl,
 )
 return userPrompt, systemPrompt
+}
+
+// buildCertificateHTMLFallback returns a deterministic A4-landscape HTML cert
+// used when GEMINI_API_KEY is missing or the AI call fails. Produces the same
+// shape every time so e2e tests can verify a real PDF gets rendered without an
+// API key. UI strings come from pickCertStrings(cert.Locale).
+func buildCertificateHTMLFallback(cert *certificate) string {
+strs := pickCertStrings(cert.Locale)
+completedDate := cert.CompletedAt.Format("January 2, 2006")
+recipient := strings.TrimSpace(cert.ContactName)
+if recipient == "" {
+recipient = "Student"
+}
+title := strings.TrimSpace(cert.CourseTitle)
+if title == "" {
+title = "Course Completion"
+}
+return fmt.Sprintf(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Certificate</title>
+<style>
+@page { size: A4 landscape; margin: 0; }
+body { font-family: Georgia, "Times New Roman", serif; color: #1a1a2e; margin: 0; padding: 0; }
+.frame { width: 277mm; height: 190mm; margin: 10mm; padding: 18mm; border: 4px double #0f3460; text-align: center; box-sizing: border-box; }
+.eyebrow { font-size: 14pt; letter-spacing: 6px; text-transform: uppercase; color: #0f3460; margin-bottom: 18mm; }
+.recipient { font-size: 36pt; font-weight: 600; margin: 6mm 0; }
+.line { font-size: 13pt; color: #444; margin: 4mm 0; }
+.course { font-size: 22pt; font-style: italic; margin: 8mm 0; color: #0f3460; }
+.meta { margin-top: 18mm; font-size: 10pt; color: #555; display: flex; justify-content: space-between; }
+</style></head>
+<body><div class="frame">
+<div class="eyebrow">%s</div>
+<div class="line">%s</div>
+<div class="recipient">%s</div>
+<div class="line">%s</div>
+<div class="course">%s</div>
+<div class="line">%s %s</div>
+<div class="meta"><span>%s: %s</span><span>%s</span></div>
+</div></body></html>`,
+escapeHTMLBasic(strs.EyebrowCompletion),
+escapeHTMLBasic(strs.LineCertifies),
+escapeHTMLBasic(recipient),
+escapeHTMLBasic(strs.LineCompleted),
+escapeHTMLBasic(title),
+escapeHTMLBasic(strs.LineOnDate), completedDate,
+escapeHTMLBasic(strs.LabelCertificateID), cert.PublicId, completedDate)
+}
+
+func escapeHTMLBasic(s string) string {
+s = strings.ReplaceAll(s, "&", "&amp;")
+s = strings.ReplaceAll(s, "<", "&lt;")
+s = strings.ReplaceAll(s, ">", "&gt;")
+s = strings.ReplaceAll(s, "\"", "&quot;")
+return s
 }
 
 func callGeminiAPI(apiKey, prompt string) (string, error) {

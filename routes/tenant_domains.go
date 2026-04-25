@@ -3,6 +3,7 @@ package routes
 import (
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/josephalai/sentanyl/pkg/auth"
@@ -119,6 +120,80 @@ func HandleDeleteTenantDomain(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "domain deleted"})
+}
+
+// HandleAdoptTenantDomain reclaims a hostname for the calling tenant when an
+// orphaned or stale registration blocks the normal POST path. Soft-deletes any
+// active row owned by another tenant (history is preserved), then inserts a
+// fresh record. Idempotent: returns 200 if the caller already owns the active
+// record. Gated by SENTANYL_E2E_MODE=1 — inert in production.
+func HandleAdoptTenantDomain(c *gin.Context) {
+	if os.Getenv("SENTANYL_E2E_MODE") != "1" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "e2e mode disabled"})
+		return
+	}
+	tenantID := auth.GetTenantObjectID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req struct {
+		Hostname string `json:"hostname" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hostname is required"})
+		return
+	}
+	hostname := strings.ToLower(strings.TrimSpace(req.Hostname))
+
+	col := db.GetCollection(models.DomainCollection)
+
+	var existing models.TenantDomain
+	err := col.Find(bson.M{
+		"hostname":              hostname,
+		"tenant_id":             tenantID,
+		"timestamps.deleted_at": nil,
+	}).One(&existing)
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"id":          existing.Id.Hex(),
+			"hostname":    existing.Hostname,
+			"is_verified": existing.IsVerified,
+			"adopted":     false,
+		})
+		return
+	}
+
+	_, err = col.UpdateAll(
+		bson.M{
+			"hostname":              hostname,
+			"tenant_id":             bson.M{"$ne": tenantID},
+			"timestamps.deleted_at": nil,
+		},
+		bson.M{"$currentDate": bson.M{"timestamps.deleted_at": true}},
+	)
+	if err != nil {
+		log.Println("adopt-domain: soft-delete prior owner failed:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to release prior owner"})
+		return
+	}
+
+	domain := models.NewTenantDomain(hostname, tenantID)
+	domain.DNSRecords.CNAME = "proxy.sentanyl.com"
+	domain.DNSRecords.TXT = "sentanyl-verify=" + domain.PublicId
+	if err := col.Insert(domain); err != nil {
+		log.Println("adopt-domain: insert failed:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to adopt domain"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":          domain.Id.Hex(),
+		"hostname":    domain.Hostname,
+		"is_verified": domain.IsVerified,
+		"adopted":     true,
+	})
 }
 
 // HandleVerifyTenantDomain checks DNS records and marks the domain as verified.
