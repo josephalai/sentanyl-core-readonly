@@ -1716,6 +1716,8 @@ func (c *Compiler) compileCourseLesson(node *LessonNode, defaultOrder int) *pkgm
 		IsFree:        node.IsFree,
 		IsDraft:       node.IsDraft,
 		DripDays:      node.DripDays,
+		DripHours:     node.DripHours,
+		DripMinutes:   node.DripMinutes,
 	}
 	if lesson.Order == 0 {
 		lesson.Order = defaultOrder

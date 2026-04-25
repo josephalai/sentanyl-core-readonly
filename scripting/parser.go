@@ -218,7 +218,7 @@ func (p *Parser) isIdentLike() bool {
 		TokQuiz, TokScore, TokCustom, TokSite, TokSEO, TokNavigation, TokHeader,
 		TokFooter, TokTheme, TokTitle, TokDescription, TokModule, TokLesson,
 		TokVideoURL, TokContent, TokDraft,
-		TokInstructor, TokLMSDuration, TokIsFree, TokIsDraft, TokDripDays,
+		TokInstructor, TokLMSDuration, TokIsFree, TokIsDraft, TokDripDays, TokDripHours, TokDripMinutes,
 		TokContentGen, TokDescriptionGen, TokPassThreshold, TokMaxAttempts,
 		TokOptions, TokMultipleChoice, TokShortAnswer, TokCertificate, TokCourseRef,
 		TokCourse, TokDurationKw, TokAudience, TokOutcome, TokTone, TokDefaultMedia,
@@ -3163,6 +3163,12 @@ func (p *Parser) parseLesson() *LessonNode {
 		case TokDripDays:
 			p.advance()
 			node.DripDays = p.expectInt()
+		case TokDripHours:
+			p.advance()
+			node.DripHours = p.expectInt()
+		case TokDripMinutes:
+			p.advance()
+			node.DripMinutes = p.expectInt()
 		case TokContentGen:
 			node.ContentGen = p.parseLMSContentGen()
 		case TokDescriptionGen:

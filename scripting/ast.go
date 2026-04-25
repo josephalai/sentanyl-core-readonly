@@ -575,6 +575,8 @@ type LessonNode struct {
 	IsFree               bool
 	IsDraft              bool
 	DripDays             int
+	DripHours            int
+	DripMinutes          int
 	VideoMode            string // "none", "stub", "uploaded"
 	VideoStubScript      string
 	VideoStubDescription string

@@ -264,6 +264,8 @@ const (
 	TokIsFree        // is_free
 	TokIsDraft       // is_draft
 	TokDripDays      // drip_days
+	TokDripHours     // drip_hours
+	TokDripMinutes   // drip_minutes
 	TokContentGen    // content_gen
 	TokDescriptionGen // description_gen
 	TokPassThreshold // pass_threshold
@@ -536,6 +538,8 @@ var tokenNames = map[TokenKind]string{
 	TokIsFree:        "is_free",
 	TokIsDraft:       "is_draft",
 	TokDripDays:      "drip_days",
+	TokDripHours:     "drip_hours",
+	TokDripMinutes:   "drip_minutes",
 	TokContentGen:    "content_gen",
 	TokDescriptionGen: "description_gen",
 	TokPassThreshold: "pass_threshold",
@@ -791,6 +795,8 @@ var keywords = map[string]TokenKind{
 	"is_free":                        TokIsFree,
 	"is_draft":                       TokIsDraft,
 	"drip_days":                      TokDripDays,
+	"drip_hours":                     TokDripHours,
+	"drip_minutes":                   TokDripMinutes,
 	"content_gen":                    TokContentGen,
 	"description_gen":                TokDescriptionGen,
 	"pass_threshold":                 TokPassThreshold,
