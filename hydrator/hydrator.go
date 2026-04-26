@@ -53,6 +53,14 @@ log.Println("[Hydrator] Starting AI content hydration worker...")
 go h.runHydrationWorker()
 }
 
+// RunCertsNow drives the certificate hydration step synchronously. Used by
+// the e2e harness to skip the 30s ticker so a cert can be asserted on the
+// same request that issued it. Idempotent: rerunning a "completed" cert is
+// a no-op because the query filters on gen_status="pending".
+func (h *Hydrator) RunCertsNow() {
+h.processPendingCertificates()
+}
+
 func (h *Hydrator) runHydrationWorker() {
 ticker := time.NewTicker(HydratorInterval)
 defer ticker.Stop()

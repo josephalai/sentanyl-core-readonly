@@ -63,6 +63,16 @@ func main() {
 	r := gin.Default()
 	r.Use(httputil.CORSMiddleware())
 
+	// E2E-mode synchronous hydrate trigger. Lets the puppeteer harness skip
+	// the 30s ticker so the same request that issues a cert can assert on
+	// asset_url after a single retry. 403 in production.
+	if os.Getenv("SENTANYL_E2E_MODE") == "1" {
+		r.POST("/internal/test/hydrate-certs", func(c *gin.Context) {
+			h.RunCertsNow()
+			c.JSON(200, gin.H{"status": "ok"})
+		})
+	}
+
 	// Public auth routes (no JWT required).
 	r.POST("/api/tenant/register", routes.HandleTenantRegister)
 	r.POST("/api/tenant/login", routes.HandleTenantLogin)
