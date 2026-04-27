@@ -59,6 +59,12 @@ func main() {
 	h := hydrator.New(bridge, gcsProvider, gcsBucket)
 	go h.Start()
 
+	// Wire the same storage provider into the context-pack render endpoints
+	// so "render a Saved Context to a Digital Download PDF" uses the same
+	// GCS bucket + auth as the cert/funnel hydrator. nil propagates the same
+	// 503 fail-closed semantics applied above.
+	routes.SetContextRenderStorage(gcsProvider, gcsBucket)
+
 	// Set up Gin router.
 	r := gin.Default()
 	r.Use(httputil.CORSMiddleware())
@@ -103,6 +109,7 @@ func main() {
 
 		// Context packs, brand profile, attribute schema
 		routes.RegisterContextPackRoutes(tenantAPI)
+		routes.RegisterContextPackRenderRoutes(tenantAPI)
 
 		// Sending domain management (JWT-authenticated, /sending-domain prefix avoids conflict with tenant vanity /domains).
 		tenantAPI.POST("/sending-domain", routes.HandleAddDomain)
