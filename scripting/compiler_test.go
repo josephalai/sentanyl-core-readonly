@@ -1,8 +1,11 @@
 package scripting
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -628,5 +631,51 @@ story "Triggers" {
 		t.Error("expected complete trigger")
 	} else if story.CompleteTrigger.Name != "graduated" {
 		t.Errorf("expected complete trigger badge 'graduated', got %q", story.CompleteTrigger.Name)
+	}
+}
+
+func TestCompilerCampaignBasicFixture(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("fixtures", "campaign_basic.ss"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	ResetIDCounter()
+	result := CompileScript(string(src), "sub_test", bson.NewObjectId())
+
+	for _, d := range result.Diagnostics {
+		if d.Level == DiagError {
+			t.Errorf("compile error: %s", d)
+		}
+	}
+	if len(result.Campaigns) != 1 {
+		t.Fatalf("expected 1 campaign, got %d", len(result.Campaigns))
+	}
+	c := result.Campaigns[0]
+	if c.Status != pkgmodels.CampaignStatusDraft {
+		t.Errorf("expected status %q, got %q", pkgmodels.CampaignStatusDraft, c.Status)
+	}
+	if c.EmailGenConfig == nil {
+		t.Fatal("expected EmailGenConfig populated from subject_gen / body_gen / context_pack")
+	}
+	if c.EmailGenConfig.SubjectInstruction == "" || c.EmailGenConfig.BodyInstruction == "" {
+		t.Errorf("expected subject + body instructions, got %+v", c.EmailGenConfig)
+	}
+	if len(c.EmailGenConfig.ContextPackRefs) != 1 || c.EmailGenConfig.ContextPackRefs[0] != "brand-tone-v1" {
+		t.Errorf("expected context pack ref, got %v", c.EmailGenConfig.ContextPackRefs)
+	}
+	if len(c.Audience.MustHave) != 1 || c.Audience.MustHave[0] != "paid_subscriber" {
+		t.Errorf("expected must_have, got %v", c.Audience.MustHave)
+	}
+	if len(c.Audience.MustNotHave) != 1 || c.Audience.MustNotHave[0] != "churned" {
+		t.Errorf("expected must_not_have, got %v", c.Audience.MustNotHave)
+	}
+	if len(c.ClickRules) != 1 {
+		t.Fatalf("expected 1 click rule, got %d", len(c.ClickRules))
+	}
+	if c.ClickRules[0].URLPattern != "https://acme.com/v2" || c.ClickRules[0].AwardBadge != "v2_announce_click" {
+		t.Errorf("unexpected click rule: %+v", c.ClickRules[0])
+	}
+	if c.PublicId == "" || c.Id == "" {
+		t.Errorf("expected PublicId + Id populated")
 	}
 }

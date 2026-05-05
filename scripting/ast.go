@@ -37,6 +37,8 @@ type ScriptAST struct {
 	PlayerPresets    []*PlayerPresetDeclNode
 	ChannelDecls     []*ChannelDeclNode
 	MediaWebhookDecls []*MediaWebhookDeclNode
+	// Campaign declarations (one-off email sends)
+	Campaigns []*CampaignNode
 }
 
 // ---------- Entity Nodes ----------
@@ -105,6 +107,39 @@ type SceneNode struct {
 	ContextPackRefs []string         // context_pack "pack-id" directives
 	SubjectGen      string           // subject_gen "instruction" for AI-generated subject
 	BodyGen         string           // body_gen "instruction" for AI-generated body
+}
+
+// CampaignAudienceNode mirrors SentanylScript's required_badges semantics for
+// campaign audience selection. Empty lists mean "no constraint on that side".
+type CampaignAudienceNode struct {
+	NodeBase
+	MustHave    []string // badge public_id or name references
+	MustNotHave []string
+}
+
+// CampaignClickRuleNode represents `on_click "<url-or-pattern>" { award_badge "<name>" }`
+// inside a campaign block. v1 supports the badge-on-click action only.
+type CampaignClickRuleNode struct {
+	NodeBase
+	URLPattern string
+	AwardBadge string
+}
+
+// CampaignNode represents a top-level `campaign "Name" { … }` declaration.
+// Compiles into a pkgmodels.Campaign in the campaigns collection (Status=draft).
+type CampaignNode struct {
+	NodeBase
+	Name            string
+	Subject         string
+	Body            string
+	FromEmail       string
+	FromName        string
+	ReplyTo         string
+	ContextPackRefs []string
+	SubjectGen      string // AI subject instruction
+	BodyGen         string // AI body instruction
+	Audience        *CampaignAudienceNode
+	OnClick         []*CampaignClickRuleNode
 }
 
 // ---------- Badge / Condition Nodes ----------

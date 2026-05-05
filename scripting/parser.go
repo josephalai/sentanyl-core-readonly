@@ -104,8 +104,13 @@ func (p *Parser) Parse() (*ScriptAST, Diagnostics) {
 			if wh != nil {
 				ast.MediaWebhookDecls = append(ast.MediaWebhookDecls, wh)
 			}
+		case p.check(TokCampaign):
+			cm := p.parseCampaign()
+			if cm != nil {
+				ast.Campaigns = append(ast.Campaigns, cm)
+			}
 		default:
-			p.errorf("expected 'story', 'funnel', 'site', 'course', 'product', 'offer', 'quiz', 'media', 'player_preset', 'channel', 'media_webhook', 'default', 'links', 'pattern', 'policy', 'data', 'scene_defaults', or 'enactment_defaults', got %s", p.cur().Kind)
+			p.errorf("expected 'story', 'funnel', 'site', 'course', 'product', 'offer', 'quiz', 'media', 'player_preset', 'channel', 'media_webhook', 'campaign', 'default', 'links', 'pattern', 'policy', 'data', 'scene_defaults', or 'enactment_defaults', got %s", p.cur().Kind)
 			p.advance()
 		}
 	}
@@ -1038,6 +1043,112 @@ func (p *Parser) parseScene() *SceneNode {
 	}
 	p.expect(TokRBrace)
 	return node
+}
+
+// ---------- Campaign Parsing ----------
+
+// parseCampaign parses: campaign "Name" { subject "..." body "..." subject_gen "..."
+//   body_gen "..." context_pack "id" from_email "..." from_name "..." reply_to "..."
+//   audience { must_have ["b1"] must_not_have ["b2"] }
+//   on_click "<url-or-pattern>" { award_badge "<name>" }
+// }
+func (p *Parser) parseCampaign() *CampaignNode {
+	pos := p.cur().Pos
+	p.expect(TokCampaign)
+	name := p.expectString()
+	node := &CampaignNode{NodeBase: NodeBase{Pos: pos}, Name: name}
+
+	p.expect(TokLBrace)
+	for !p.check(TokRBrace) && !p.atEnd() {
+		switch p.cur().Kind {
+		case TokSubject:
+			p.advance()
+			node.Subject = p.expectStringOrIdent()
+		case TokBody:
+			p.advance()
+			node.Body = p.expectStringOrIdent()
+		case TokFromEmail:
+			p.advance()
+			node.FromEmail = p.expectStringOrIdent()
+		case TokFromName:
+			p.advance()
+			node.FromName = p.expectStringOrIdent()
+		case TokReplyTo:
+			p.advance()
+			node.ReplyTo = p.expectStringOrIdent()
+		case TokContextPack:
+			p.advance()
+			node.ContextPackRefs = append(node.ContextPackRefs, p.expectString())
+		case TokSubjectGen:
+			p.advance()
+			node.SubjectGen = p.expectString()
+		case TokBodyGen:
+			p.advance()
+			node.BodyGen = p.expectString()
+		case TokAudience:
+			node.Audience = p.parseCampaignAudience()
+		case TokOnClick:
+			rule := p.parseCampaignOnClick()
+			if rule != nil {
+				node.OnClick = append(node.OnClick, rule)
+			}
+		default:
+			p.errorf("unexpected token %s in campaign block", p.cur().Kind)
+			p.advance()
+		}
+	}
+	p.expect(TokRBrace)
+	return node
+}
+
+// parseCampaignAudience parses: audience { must_have ["b1","b2"] must_not_have ["b3"] }
+func (p *Parser) parseCampaignAudience() *CampaignAudienceNode {
+	pos := p.cur().Pos
+	p.advance() // consume audience
+	node := &CampaignAudienceNode{NodeBase: NodeBase{Pos: pos}}
+
+	p.expect(TokLBrace)
+	for !p.check(TokRBrace) && !p.atEnd() {
+		switch p.cur().Kind {
+		case TokMustHave:
+			p.advance()
+			node.MustHave = append(node.MustHave, p.parseStringListOrSingle()...)
+		case TokMustNotHave:
+			p.advance()
+			node.MustNotHave = append(node.MustNotHave, p.parseStringListOrSingle()...)
+		default:
+			p.errorf("unexpected token %s in audience block", p.cur().Kind)
+			p.advance()
+		}
+	}
+	p.expect(TokRBrace)
+	return node
+}
+
+// parseCampaignOnClick parses: on_click "<url-or-pattern>" { give_badge "<name>" }
+// give_badge is the existing token; we treat it as the v1 award action.
+func (p *Parser) parseCampaignOnClick() *CampaignClickRuleNode {
+	pos := p.cur().Pos
+	p.expect(TokOnClick)
+	urlPat := ""
+	if p.check(TokString) {
+		urlPat = p.expectString()
+	}
+	rule := &CampaignClickRuleNode{NodeBase: NodeBase{Pos: pos}, URLPattern: urlPat}
+
+	p.expect(TokLBrace)
+	for !p.check(TokRBrace) && !p.atEnd() {
+		switch p.cur().Kind {
+		case TokGiveBadge:
+			p.advance()
+			rule.AwardBadge = p.expectString()
+		default:
+			p.errorf("unexpected token %s in on_click block", p.cur().Kind)
+			p.advance()
+		}
+	}
+	p.expect(TokRBrace)
+	return rule
 }
 
 // ---------- Trigger Parsing ----------

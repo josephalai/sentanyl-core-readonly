@@ -39,6 +39,9 @@ type CompileResult struct {
 	Quizzes            []*pkgmodels.LMSQuiz
 	CertificateTemplates []*pkgmodels.CertificateTemplate
 
+	// Campaign entities (one-off email sends)
+	Campaigns []*pkgmodels.Campaign
+
 	// All entities generated, keyed by name for reference.
 	Badges         map[string]*pkgmodels.Badge
 	Tags           map[string]*pkgmodels.Tag
@@ -230,6 +233,14 @@ func (c *Compiler) Compile() *CompileResult {
 		webhook := c.compileMediaWebhookDecl(webhookNode)
 		if webhook != nil {
 			result.MediaWebhooks = append(result.MediaWebhooks, webhook)
+		}
+	}
+
+	// Compile campaigns (one-off email sends; default Status=draft, no auto-send).
+	for _, campaignNode := range c.ast.Campaigns {
+		camp := c.compileCampaign(campaignNode)
+		if camp != nil {
+			result.Campaigns = append(result.Campaigns, camp)
 		}
 	}
 
@@ -2159,4 +2170,51 @@ URL:          node.URL,
 EventTypes:   node.EventTypes,
 Enabled:      node.Enabled,
 }
+}
+
+// ---------- Campaign Compilation ----------
+
+// compileCampaign compiles a CampaignNode into a *pkgmodels.Campaign entity.
+// Status defaults to draft; tenant scoping is applied by the persistence layer.
+func (c *Compiler) compileCampaign(node *CampaignNode) *pkgmodels.Campaign {
+	camp := &pkgmodels.Campaign{
+		Id:           bson.NewObjectId(),
+		PublicId:     generatePublicID("campaign"),
+		SubscriberId: c.subscriberID,
+		CreatorId:    c.creatorID,
+		Name:         node.Name,
+		Subject:      node.Subject,
+		Body:         node.Body,
+		FromEmail:    node.FromEmail,
+		FromName:     node.FromName,
+		ReplyTo:      node.ReplyTo,
+		Status:       pkgmodels.CampaignStatusDraft,
+	}
+
+	if node.Audience != nil {
+		camp.Audience = pkgmodels.CampaignAudience{
+			MustHave:    append([]string(nil), node.Audience.MustHave...),
+			MustNotHave: append([]string(nil), node.Audience.MustNotHave...),
+		}
+	}
+
+	if node.SubjectGen != "" || node.BodyGen != "" || len(node.ContextPackRefs) > 0 {
+		camp.EmailGenConfig = &pkgmodels.EmailGenConfig{
+			SubjectInstruction: node.SubjectGen,
+			BodyInstruction:    node.BodyGen,
+			ContextPackRefs:    append([]string(nil), node.ContextPackRefs...),
+		}
+	}
+
+	for _, rule := range node.OnClick {
+		if rule == nil {
+			continue
+		}
+		camp.ClickRules = append(camp.ClickRules, pkgmodels.CampaignClickRule{
+			URLPattern: rule.URLPattern,
+			AwardBadge: rule.AwardBadge,
+		})
+	}
+
+	return camp
 }

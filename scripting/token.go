@@ -312,6 +312,11 @@ const (
 	TokSubjectGen  // subject_gen
 	TokBodyGen     // body_gen
 
+	// Keywords — campaigns (one-off email sends)
+	TokCampaign // campaign
+	TokOnClick  // on_click — link-click hook (in campaign block)
+	TokOnOpen   // on_open  — reserved; open-tracking deferred
+
 	// Keywords — misc
 	TokTrue
 	TokFalse
@@ -512,6 +517,10 @@ var tokenNames = map[TokenKind]string{
 	TokContextPack: "context_pack",
 	TokSubjectGen:  "subject_gen",
 	TokBodyGen:     "body_gen",
+
+	TokCampaign: "campaign",
+	TokOnClick:  "on_click",
+	TokOnOpen:   "on_open",
 
 	TokTrue:  "true",
 	TokFalse: "false",
@@ -837,6 +846,10 @@ var keywords = map[string]TokenKind{
 	"context_pack":                   TokContextPack,
 	"subject_gen":                    TokSubjectGen,
 	"body_gen":                       TokBodyGen,
+
+	"campaign": TokCampaign,
+	"on_click": TokOnClick,
+	"on_open":  TokOnOpen,
 }
 
 // LookupIdent returns the keyword TokenKind for ident, or TokIdent if it is

@@ -595,3 +595,61 @@ func TestParserUnexpectedTokenInStory(t *testing.T) {
 		t.Error("expected parse errors for unexpected token")
 	}
 }
+
+func TestParserCampaignBlock(t *testing.T) {
+	src := `campaign "Summer Launch" {
+		from_email "hello@acme.com"
+		from_name "Acme"
+		reply_to "support@acme.com"
+		context_pack "brand-tone-v1"
+		subject_gen "Tease the v2 launch"
+		body_gen "Lead with one outcome, list 3 highlights, single CTA"
+		audience {
+			must_have ["paid_subscriber"]
+			must_not_have ["churned"]
+		}
+		on_click "https://acme.com/v2" {
+			give_badge "v2_announce_click"
+		}
+	}`
+	result := ParseScript(src)
+	for _, d := range result.Diagnostics {
+		if d.Level == DiagError {
+			t.Errorf("parse error: %s", d)
+		}
+	}
+	if len(result.AST.Campaigns) != 1 {
+		t.Fatalf("expected 1 campaign, got %d", len(result.AST.Campaigns))
+	}
+	c := result.AST.Campaigns[0]
+	if c.Name != "Summer Launch" {
+		t.Errorf("expected campaign name 'Summer Launch', got %q", c.Name)
+	}
+	if c.FromEmail != "hello@acme.com" {
+		t.Errorf("expected from_email, got %q", c.FromEmail)
+	}
+	if c.SubjectGen == "" || c.BodyGen == "" {
+		t.Errorf("expected subject_gen + body_gen to be set")
+	}
+	if len(c.ContextPackRefs) != 1 || c.ContextPackRefs[0] != "brand-tone-v1" {
+		t.Errorf("expected context_pack 'brand-tone-v1', got %v", c.ContextPackRefs)
+	}
+	if c.Audience == nil {
+		t.Fatal("expected audience block")
+	}
+	if len(c.Audience.MustHave) != 1 || c.Audience.MustHave[0] != "paid_subscriber" {
+		t.Errorf("expected must_have ['paid_subscriber'], got %v", c.Audience.MustHave)
+	}
+	if len(c.Audience.MustNotHave) != 1 || c.Audience.MustNotHave[0] != "churned" {
+		t.Errorf("expected must_not_have ['churned'], got %v", c.Audience.MustNotHave)
+	}
+	if len(c.OnClick) != 1 {
+		t.Fatalf("expected 1 on_click rule, got %d", len(c.OnClick))
+	}
+	if c.OnClick[0].URLPattern != "https://acme.com/v2" {
+		t.Errorf("expected url pattern, got %q", c.OnClick[0].URLPattern)
+	}
+	if c.OnClick[0].AwardBadge != "v2_announce_click" {
+		t.Errorf("expected award badge, got %q", c.OnClick[0].AwardBadge)
+	}
+}

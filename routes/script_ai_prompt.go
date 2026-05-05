@@ -390,7 +390,8 @@ pattern name(params) { … }    # reusable enactment/trigger templates
 policy name(params) { … }     # reusable trigger-only templates
 scene_defaults { … }          # triggers applied to every scene
 enactment_defaults { … }      # triggers applied to every enactment
-story "Name" { … }            # the campaign itself
+story "Name" { … }            # multi-step automation (drip)
+campaign "Name" { … }         # one-off email send (broadcast)
 ` + "```" + `
 
 ## Minimum Valid Script
@@ -561,6 +562,87 @@ scene "Name" {
   tags       ["tag1", "tag2"]
 }
 ` + "```" + `
+
+## Campaigns (One-Off Sends)
+
+A ` + "`campaign`" + ` block is a top-level entity for a SINGLE broadcast email
+(announcement, newsletter blast, launch ping). Distinct from ` + "`story`" + `,
+which models a multi-step drip with triggers/branching. Campaigns compile to
+status=draft — never auto-send. They support AI-filled subject/body via
+` + "`subject_gen`" + ` / ` + "`body_gen`" + ` and badge-defined audiences via
+` + "`audience { must_have / must_not_have }`" + `. Click rules grant a badge
+when a recipient clicks a matching URL.
+
+### Campaign Fields
+` + "```dsl" + `
+campaign "Name" {
+  subject    "Subject line"          # OR use subject_gen
+  body       "<p>HTML</p>"           # OR use body_gen
+  from_email "sender@example.com"
+  from_name  "Sender Name"
+  reply_to   "reply@example.com"
+
+  context_pack "pack-id"             # repeatable; AI grounding
+  subject_gen  "AI subject instruction"
+  body_gen     "AI body instruction"
+
+  audience {
+    must_have    ["badge1", "badge2"]
+    must_not_have ["churned"]
+  }
+
+  on_click "https://example.com/cta" {
+    give_badge "clicked_cta"
+  }
+}
+` + "```" + `
+
+### Example: AI-generated launch announcement
+` + "```dsl" + `
+campaign "v2 Launch" {
+  from_email "team@acme.com"
+  from_name  "Acme"
+  reply_to   "support@acme.com"
+
+  context_pack "brand-tone-v1"
+  subject_gen "Tease the v2 launch with the headline benefit"
+  body_gen    "Lead with one customer outcome, list 3 highlights, single CTA"
+
+  audience {
+    must_have ["paid_subscriber"]
+    must_not_have ["churned"]
+  }
+
+  on_click "https://acme.com/v2" {
+    give_badge "v2_announce_click"
+  }
+}
+` + "```" + `
+
+### Example: Static announcement with click-tracking
+` + "```dsl" + `
+campaign "Black Friday Heads-Up" {
+  subject    "Save 40% — Friday only"
+  body       "<p>Our biggest sale of the year. <a href=\"https://acme.com/bf\">Shop now →</a></p>"
+  from_email "sales@acme.com"
+  from_name  "Acme Sales"
+
+  audience {
+    must_have ["newsletter_subscriber"]
+  }
+
+  on_click "https://acme.com/bf" {
+    give_badge "bf_engaged"
+  }
+}
+` + "```" + `
+
+Rules:
+- Use ` + "`campaign`" + ` for one-off sends; use ` + "`story`" + ` for drips.
+- A campaign needs EITHER ` + "`subject`" + `+` + "`body`" + ` literals OR ` + "`subject_gen`" + `+` + "`body_gen`" + ` (AI-filled at generation time).
+- Audience badges are referenced by name or public_id; the runtime resolves them.
+- ` + "`on_click`" + ` URL pattern is a prefix match. Empty pattern means every link.
+- Campaigns NEVER auto-send. The user (or the API) triggers send/schedule.
 
 ## All 15 Trigger Types
 - click [URL], not_click [URL], open, not_open, sent
