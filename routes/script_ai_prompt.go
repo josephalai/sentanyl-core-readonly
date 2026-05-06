@@ -838,4 +838,123 @@ funnel "Name" {
 - provide_download "file" — trigger file download
 - send_email "template" — send a specific email
 - give_badge / remove_badge — manage user badges
+
+## Media Intelligence (Video / VSL)
+
+Sentanyl ships a Wistia-style runtime player. Authoring it through SentanylScript means the AI generates a ` + "`media`" + ` declaration plus optional ` + "`player_preset`" + `, ` + "`channel`" + `, and ` + "`media_webhook`" + ` siblings. Each ` + "`media`" + ` carries chapters, interactions (turnstile / cta / annotation), and badge_rules; the runtime activates them automatically on any published page that references the media.
+
+### media
+
+` + "```dsl" + `
+media "Demo VSL" {
+  description "5-minute walkthrough of the Q4 launch"
+  kind "video"
+  source_url "https://cdn.example.com/q4-launch.mp4"
+  poster_url "https://cdn.example.com/q4-poster.jpg"
+  player_preset "Branded"
+
+  chapter "Intro" { start_sec 0   end_sec 30 }
+  chapter "Pitch" { start_sec 30  end_sec 90 }
+  chapter "Offer" { start_sec 90  end_sec 120 }
+
+  interaction "EmailGate" {
+    kind "turnstile"
+    start_sec 25  end_sec 30
+    required true
+    fields ["email", "first_name"]
+    button_text "Continue"
+  }
+
+  interaction "BuyCTA" {
+    kind "cta"
+    start_sec 110  end_sec 120
+    text "Ready to start?"
+    url "/offer/q4-launch"
+    button_text "Get instant access"
+  }
+
+  badge_rule {
+    event_name "progress"
+    operator ">="
+    threshold 75
+    badge "engaged"
+    once_per_viewer true
+  }
+
+  badge_rule {
+    event_name "complete"
+    badge "watched-vsl"
+  }
+}
+` + "```" + `
+
+### player_preset (reusable branded chrome)
+
+` + "```dsl" + `
+player_preset "Branded" {
+  player_color "#0e0e10"
+  show_controls true
+  hide_progress_bar false
+  allow_seeking true
+  autoplay false
+  muted_default false
+  end_behavior "show_cta"
+  chapter_style "list"
+  chapter_position "right"
+  chapter_click_jump true
+}
+` + "```" + `
+
+### channel (multi-video playlist)
+
+` + "```dsl" + `
+channel "Onboarding Series" {
+  layout "grid"
+  theme "dark"
+  items ["Welcome", "Tour", "Setup"]
+}
+` + "```" + `
+
+### media_webhook (outbound analytics sink)
+
+` + "```dsl" + `
+media_webhook "Pipedream" {
+  url "https://endpoint.example.com/sentanyl"
+  event_types ["play", "complete", "turnstile_submit", "cta_click"]
+  enabled true
+}
+` + "```" + `
+
+### Video Sales Letter (VSL) recipe
+
+When a video lives inside a funnel page, pair it with a sales or squeeze section at the bottom of the page (the runtime auto-attributes their conversions back to the watch session, so revenue/leads tie cleanly to the video).
+
+` + "```dsl" + `
+media "Pitch Video" {
+  source_url "https://cdn.example.com/pitch.mp4"
+  chapter "Hook"     { start_sec 0   end_sec 45 }
+  chapter "Proof"    { start_sec 45  end_sec 240 }
+  chapter "Offer"    { start_sec 240 end_sec 360 }
+  interaction "Gate" {
+    kind "turnstile" start_sec 240 end_sec 245
+    required true fields ["email"]
+  }
+  badge_rule {
+    event_name "progress" operator ">=" threshold 75 badge "vsl-engaged"
+  }
+}
+
+funnel "Q4 Launch" {
+  route "Default" {
+    stage "VSL" {
+      path "/q4"
+      page "Sales" {
+        block "video"     { type video    media "Pitch Video" }
+        block "sales-cta" { type sales    offer_id "off_q4_pro" }
+      }
+      on watch "video" >= 75 { do give_badge "vsl-engaged" }
+    }
+  }
+}
+` + "```" + `
 `

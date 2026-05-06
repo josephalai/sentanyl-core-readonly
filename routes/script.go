@@ -422,7 +422,12 @@ func buildHydrateGraphPayload(result *scripting.CompileResult, stories []*pkgmod
 // handleScriptAI is defined in script_ai.go
 
 func handleScriptReference(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"reference": "SentanylScript DSL reference — see docs."})
+	c.JSON(http.StatusOK, gin.H{
+		"reference":         dslReferenceMarkdown,
+		"system_prompt":     dslSystemPrompt,
+		"format":            "markdown",
+		"includes_examples": true,
+	})
 }
 
 // badgeMapToSlice converts the compiler's map[name]*Badge into the array
