@@ -112,20 +112,21 @@ func main() {
 		routes.RegisterContextPackRoutes(tenantAPI)
 		routes.RegisterContextPackRenderRoutes(tenantAPI)
 
-		// Sending domain management (JWT-authenticated, /sending-domain prefix avoids conflict with tenant vanity /domains).
-		tenantAPI.POST("/sending-domain", routes.HandleAddDomain)
-		tenantAPI.GET("/sending-domains", routes.HandleGetDomains)
-		tenantAPI.GET("/sending-domain/:domainId", routes.HandleGetDomain)
-		tenantAPI.DELETE("/sending-domain/:domainId", routes.HandleDeleteDomain)
-		tenantAPI.POST("/sending-domain/:domainId/verify-dns", routes.HandleVerifyDNS)
-		tenantAPI.POST("/sending-domain/:domainId/test-send", routes.HandleTestSend)
-		tenantAPI.GET("/sending-domain/:domainId/test-send-status", routes.HandleGetTestSendStatus)
-		tenantAPI.GET("/sending-domain/:domainId/stats", routes.HandleGetDomainStats)
-		tenantAPI.GET("/sending-domain/:domainId/reputation", routes.HandleGetDomainReputation)
-		tenantAPI.GET("/sending-domain/:domainId/warming", routes.HandleGetDomainWarming)
-		tenantAPI.GET("/sending-domain/:domainId/bounces", routes.HandleGetDomainBounces)
-		tenantAPI.POST("/sending-domain/:domainId/pause", routes.HandlePauseDomain)
-		tenantAPI.POST("/sending-domain/:domainId/resume", routes.HandleResumeDomain)
+		// Sending domain management (JWT-authenticated). Handlers read tenant
+		// identity from the JWT context and never accept legacy subscriber_id.
+		tenantAPI.POST("/sending-domain", routes.HandleAddTenantSendingDomain)
+		tenantAPI.GET("/sending-domains", routes.HandleListTenantSendingDomains)
+		tenantAPI.GET("/sending-domain/:domainId", routes.HandleGetTenantSendingDomain)
+		tenantAPI.DELETE("/sending-domain/:domainId", routes.HandleDeleteTenantSendingDomain)
+		tenantAPI.POST("/sending-domain/:domainId/verify-dns", routes.HandleVerifyTenantSendingDomainDNS)
+		tenantAPI.POST("/sending-domain/:domainId/test-send", routes.HandleTenantSendingDomainTestSend)
+		tenantAPI.GET("/sending-domain/:domainId/test-send-status", routes.HandleGetTenantSendingDomainTestSendStatus)
+		tenantAPI.GET("/sending-domain/:domainId/stats", routes.HandleGetTenantSendingDomainStats)
+		tenantAPI.GET("/sending-domain/:domainId/reputation", routes.HandleGetTenantSendingDomainReputation)
+		tenantAPI.GET("/sending-domain/:domainId/warming", routes.HandleGetTenantSendingDomainWarming)
+		tenantAPI.GET("/sending-domain/:domainId/bounces", routes.HandleGetTenantSendingDomainBounces)
+		tenantAPI.POST("/sending-domain/:domainId/pause", routes.HandlePauseTenantSendingDomain)
+		tenantAPI.POST("/sending-domain/:domainId/resume", routes.HandleResumeTenantSendingDomain)
 
 		// Story builder — stories, storylines, enactments, scenes, messages,
 		// triggers, actions, badges, tags, users, email lists, stats, etc.
