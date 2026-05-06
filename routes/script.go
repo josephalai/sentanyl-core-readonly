@@ -1,15 +1,27 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/core-service/scripting"
-	"github.com/josephalai/sentanyl/pkg/db"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 )
+
+// scriptBridge is the cross-service HTTP client used by handleDeployScript
+// to POST the full compiled graph at /internal/hydrate-graph in
+// marketing-service. It is set once at process start by SetScriptBridge so
+// the route registration signature stays fixed.
+var scriptBridge *ServiceBridge
+
+// SetScriptBridge wires the bridge used by /api/script/deploy. Call once
+// after NewServiceBridge in main.go before serving traffic.
+func SetScriptBridge(b *ServiceBridge) {
+	scriptBridge = b
+}
 
 // fixtureEntry describes a named fixture script available via the API.
 type fixtureEntry struct {
@@ -214,12 +226,17 @@ func handleValidateScript(c *gin.Context) {
 
 func handleDeployScript(c *gin.Context) {
 	var req struct {
-		Source        string `json:"source" binding:"required"`
-		SubscriberID  string `json:"subscriber_id"`
-		StoryIndices  []int  `json:"story_indices"`
+		Source       string `json:"source" binding:"required"`
+		SubscriberID string `json:"subscriber_id"`
+		StoryIndices []int  `json:"story_indices"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "source is required"})
+		return
+	}
+
+	if scriptBridge == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "service bridge not configured"})
 		return
 	}
 
@@ -233,18 +250,17 @@ func handleDeployScript(c *gin.Context) {
 		return
 	}
 
-	// Resolve the tenant ObjectId from the subscriber_id hex string.
-	// The compiler sets SubscriberId (string) but Offer/Product have TenantID (ObjectId)
-	// which was previously set by the monolith's auth middleware. Stamp it here.
+	// Resolve the tenant ObjectId from the subscriber_id hex string. The
+	// hydrator does not derive tenant from a header — every entity must
+	// carry tenant_id before we ship it across the bridge.
 	var tenantOID bson.ObjectId
 	if bson.IsObjectIdHex(req.SubscriberID) {
 		tenantOID = bson.ObjectIdHex(req.SubscriberID)
 	}
 
-	// Persist compiled stories (filter by indices if requested).
 	stories := result.Stories
 	if len(req.StoryIndices) > 0 {
-		filtered := make([]*pkgmodels.Story, 0)
+		filtered := make([]*pkgmodels.Story, 0, len(req.StoryIndices))
 		for _, idx := range req.StoryIndices {
 			if idx >= 0 && idx < len(stories) {
 				filtered = append(filtered, stories[idx])
@@ -253,74 +269,154 @@ func handleDeployScript(c *gin.Context) {
 		stories = filtered
 	}
 
-	for _, s := range stories {
-		if err := db.GetCollection(pkgmodels.StoryCollection).Insert(s); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist story: " + err.Error()})
-			return
-		}
+	stampTenantOnGraph(result, stories, tenantOID)
+
+	payload := buildHydrateGraphPayload(result, stories)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "marshal failed: " + err.Error()})
+		return
 	}
 
+	respBody, err := scriptBridge.HydrateGraph(body)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "hydrate failed: " + err.Error(), "hydrator_response": string(respBody)})
+		return
+	}
+
+	var hydrateResp map[string]interface{}
+	if len(respBody) > 0 {
+		_ = json.Unmarshal(respBody, &hydrateResp)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stories":     stories,
+		"funnels":     result.Funnels,
+		"products":    result.Products,
+		"offers":      result.Offers,
+		"sites":       result.Sites,
+		"badges":      badgeMapToSlice(result.Badges),
+		"quizzes":     result.Quizzes,
+		"counts":      hydrateResp["counts"],
+		"diagnostics": formatDiagnostics(result.Diagnostics),
+	})
+}
+
+// stampTenantOnGraph fills TenantID on every entity that carries one but
+// was emitted by the compiler without it. Mirrors the legacy direct-insert
+// behavior so the hydrator's per-entity upsert key (tenant_id, public_id)
+// is well-defined.
+func stampTenantOnGraph(result *scripting.CompileResult, stories []*pkgmodels.Story, tenantOID bson.ObjectId) {
+	if tenantOID == "" {
+		return
+	}
 	for _, f := range result.Funnels {
-		if tenantOID != "" && f.TenantID == "" {
+		if f != nil && f.TenantID == "" {
 			f.TenantID = tenantOID
 		}
-		if err := db.GetCollection(pkgmodels.FunnelCollection).Insert(f); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist funnel: " + err.Error()})
-			return
+	}
+	for _, s := range stories {
+		if s != nil && s.TenantID == "" {
+			s.TenantID = tenantOID
 		}
 	}
-
 	for _, p := range result.Products {
-		if tenantOID != "" && p.TenantID == "" {
+		if p != nil && p.TenantID == "" {
 			p.TenantID = tenantOID
 		}
-		if err := db.GetCollection(pkgmodels.ProductCollection).Insert(p); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist product: " + err.Error()})
-			return
-		}
 	}
-
 	for _, o := range result.Offers {
-		if tenantOID != "" && o.TenantID == "" {
+		if o != nil && o.TenantID == "" {
 			o.TenantID = tenantOID
 		}
-		if err := db.GetCollection(pkgmodels.OfferCollection).Insert(o); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist offer: " + err.Error()})
-			return
+	}
+	for _, s := range result.Sites {
+		if s != nil && s.TenantID == "" {
+			s.TenantID = tenantOID
 		}
 	}
+	for _, a := range result.Assets {
+		if a != nil && a.TenantID == "" {
+			a.TenantID = tenantOID
+		}
+	}
+	for _, m := range result.MediaEntities {
+		if m != nil && m.TenantID == "" {
+			m.TenantID = tenantOID
+		}
+	}
+	for _, p := range result.PlayerPresets {
+		if p != nil && p.TenantID == "" {
+			p.TenantID = tenantOID
+		}
+	}
+	for _, ch := range result.Channels {
+		if ch != nil && ch.TenantID == "" {
+			ch.TenantID = tenantOID
+		}
+	}
+	for _, w := range result.MediaWebhooks {
+		if w != nil && w.TenantID == "" {
+			w.TenantID = tenantOID
+		}
+	}
+	for _, q := range result.Quizzes {
+		if q != nil && q.TenantID == "" {
+			q.TenantID = tenantOID
+		}
+	}
+	for _, ct := range result.CertificateTemplates {
+		if ct != nil && ct.TenantID == "" {
+			ct.TenantID = tenantOID
+		}
+	}
+	for _, cmp := range result.Campaigns {
+		if cmp != nil && cmp.TenantID == "" {
+			cmp.TenantID = tenantOID
+		}
+	}
+	for _, b := range result.Badges {
+		if b != nil && b.TenantID == "" {
+			b.TenantID = tenantOID
+		}
+	}
+}
 
+// buildHydrateGraphPayload converts the compiler result into the snake_case
+// shape that marketing-service's HydrateGraphRequest unmarshals. Badges and
+// Tags collapse from name-keyed maps to slices.
+func buildHydrateGraphPayload(result *scripting.CompileResult, stories []*pkgmodels.Story) map[string]interface{} {
+	badges := make([]*pkgmodels.Badge, 0, len(result.Badges))
 	for _, b := range result.Badges {
 		if b == nil {
 			continue
 		}
-		if err := db.GetCollection(pkgmodels.BadgeCollection).Insert(b); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist badge: " + err.Error()})
-			return
-		}
+		badges = append(badges, b)
 	}
-
-	// Persist LMS quizzes (separate collection, linked to products via ProductID + ModuleSlug).
-	for _, q := range result.Quizzes {
-		if q == nil {
+	tags := make([]*pkgmodels.Tag, 0, len(result.Tags))
+	for _, t := range result.Tags {
+		if t == nil {
 			continue
 		}
-		if err := db.GetCollection(pkgmodels.LMSQuizCollection).Insert(q); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist quiz: " + err.Error()})
-			return
-		}
+		tags = append(tags, t)
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"stories":     result.Stories,
-		"funnels":     result.Funnels,
-		"products":    result.Products,
-		"offers":      result.Offers,
-		"sites":       []interface{}{},
-		"badges":      badgeMapToSlice(result.Badges),
-		"quizzes":     result.Quizzes,
-		"diagnostics": formatDiagnostics(result.Diagnostics),
-	})
+	return map[string]interface{}{
+		"stories":               stories,
+		"funnels":               result.Funnels,
+		"sites":                 result.Sites,
+		"products":              result.Products,
+		"offers":                result.Offers,
+		"assets":                result.Assets,
+		"media_entities":        result.MediaEntities,
+		"player_presets":        result.PlayerPresets,
+		"channels":              result.Channels,
+		"media_webhooks":        result.MediaWebhooks,
+		"quizzes":               result.Quizzes,
+		"certificate_templates": result.CertificateTemplates,
+		"campaigns":             result.Campaigns,
+		"badges":                badges,
+		"tags":                  tags,
+	}
 }
 
 // handleScriptAI is defined in script_ai.go

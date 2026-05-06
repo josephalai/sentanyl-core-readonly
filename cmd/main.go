@@ -42,6 +42,7 @@ func main() {
 	lmsURL := envOrDefault("LMS_SERVICE_URL", "http://localhost:8082")
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")
 	bridge := routes.NewServiceBridge(lmsURL, marketingURL)
+	routes.SetScriptBridge(bridge)
 
 	// Start the hydrator worker. Cert + funnel PDFs are uploaded to GCS via
 	// the shared storage provider; if GCS init fails (missing creds in dev),

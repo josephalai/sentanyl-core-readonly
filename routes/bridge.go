@@ -58,3 +58,23 @@ func (b *ServiceBridge) HydrateFunnel(data []byte) error {
 	}
 	return nil
 }
+
+// HydrateGraph sends a full compiled-graph payload to marketing-service's
+// /internal/hydrate-graph endpoint. Body shape must match HydrateGraphRequest
+// (snake_case top-level slices). Marketing-service upserts each entity by _id
+// or (tenant_id, public_id) so re-running the same compile is idempotent.
+// Returns the marketing-service response body so callers can surface counts.
+func (b *ServiceBridge) HydrateGraph(data []byte) ([]byte, error) {
+	url := b.MarketingBaseURL + "/internal/hydrate-graph"
+	resp, err := b.client.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("graph hydrate request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return body, fmt.Errorf("graph hydrate failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
