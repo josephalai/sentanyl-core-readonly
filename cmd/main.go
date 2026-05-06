@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/josephalai/sentanyl/core-service/hydrator"
+	"github.com/josephalai/sentanyl/core-service/internal/sidecar"
 	"github.com/josephalai/sentanyl/core-service/routes"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/config"
@@ -43,6 +44,11 @@ func main() {
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")
 	bridge := routes.NewServiceBridge(lmsURL, marketingURL)
 	routes.SetScriptBridge(bridge)
+
+	// PowerMTA deliverability sidecar. When POWERMTA_SIDECAR_URL is unset
+	// the client returns ErrSidecarUnconfigured for every method, and the
+	// route handlers translate that into HTTP 503 instead of fake success.
+	routes.SetSidecarClient(sidecar.New())
 
 	// Start the hydrator worker. Cert + funnel PDFs are uploaded to GCS via
 	// the shared storage provider; if GCS init fails (missing creds in dev),

@@ -8,13 +8,34 @@ import (
 	"strings"
 	"time"
 
-	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/core-service/internal/sidecar"
 	"github.com/josephalai/sentanyl/pkg/db"
+	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/models"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
 )
+
+// sidecarClient is the singleton PowerMTA client used by every Sidecar*
+// helper below. SetSidecarClient is called once from cmd/main.go so the
+// route registration signature stays unchanged. When the env var
+// POWERMTA_SIDECAR_URL is unset, the client returns ErrSidecarUnconfigured
+// for every method and the helpers below translate that into a clear
+// "sidecar not configured" error rather than fake success.
+var sidecarClient *sidecar.Client
+
+// SetSidecarClient injects the deliverability sidecar HTTP client.
+func SetSidecarClient(c *sidecar.Client) { sidecarClient = c }
+
+// requireSidecar returns the configured client or a wrapped error suitable
+// for handlers to map onto HTTP 503.
+func requireSidecar() (*sidecar.Client, error) {
+	if sidecarClient == nil || !sidecarClient.Configured() {
+		return nil, sidecar.ErrSidecarUnconfigured
+	}
+	return sidecarClient, nil
+}
 
 // ServerIP is the PowerMTA server's public IP, used in SPF record instructions.
 const ServerIP = "5.78.200.152"
@@ -46,69 +67,113 @@ func GetCreatorByPublicId(publicId string) (*pkgmodels.Creator, error) {
 	return &c, nil
 }
 
-// ── Sidecar stubs ───────────────────────────────────────────────────────────
-// These are stubs for the PowerMTA sidecar integration. In a full deployment
-// they will call the sidecar HTTP API.
+// ── Sidecar wrappers ────────────────────────────────────────────────────────
+// Thin shims around sidecar.Client. They preserve the historical function
+// signatures so the route handlers in this file (and the legacy /api/domain*
+// aliases) compile unchanged. ErrSidecarUnconfigured propagates from the
+// client when POWERMTA_SIDECAR_URL is unset, and handleSidecarErr translates
+// that into a 503 instead of pretending the call succeeded.
 
-type SidecarResponse struct {
-	VMTA string `json:"vmta"`
-}
+type SidecarResponse = sidecar.AddDomainResponse
+type SidecarHealth = sidecar.HealthResponse
 
 func SidecarAddDomain(domain, selector, privPEM string) (*SidecarResponse, error) {
-	log.Printf("sidecar: add domain %s (stub)", domain)
-	return &SidecarResponse{VMTA: "vm-" + domain}, nil
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.AddDomain(domain, selector, privPEM)
 }
 
 func SidecarDeleteDomain(domain string) error {
-	log.Printf("sidecar: delete domain %s (stub)", domain)
-	return nil
+	c, err := requireSidecar()
+	if err != nil {
+		return err
+	}
+	return c.DeleteDomain(domain)
 }
 
 func SidecarTestSend(domain, to, from, subject string) ([]byte, error) {
-	log.Printf("sidecar: test send from %s to %s (stub)", from, to)
-	resp := map[string]interface{}{
-		"status":     "accepted",
-		"message_id": "stub-" + domain,
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
 	}
-	return json.Marshal(resp)
-}
-
-type SidecarHealth struct {
-	AccountingLogExists bool `json:"accounting_log_exists"`
+	return c.TestSend(domain, to, from, subject)
 }
 
 func SidecarGetHealth() (*SidecarHealth, error) {
-	return &SidecarHealth{AccountingLogExists: true}, nil
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.Health()
 }
 
 func SidecarGetStats(domain, since string) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{"domain": domain, "since": since})
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.Stats(domain, since)
 }
 
 func SidecarGetQueueDepth() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{"depth": 0})
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.QueueDepth()
 }
 
 func SidecarGetReputation(domain string) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{"domain": domain})
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.Reputation(domain)
 }
 
 func SidecarGetWarming(domain string) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{"domain": domain})
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.Warming(domain)
 }
 
 func SidecarGetBounces(domain, since string) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{"domain": domain, "since": since})
+	c, err := requireSidecar()
+	if err != nil {
+		return nil, err
+	}
+	return c.Bounces(domain, since)
 }
 
 func SidecarPauseDomain(domain string) error {
-	log.Printf("sidecar: pause domain %s (stub)", domain)
-	return nil
+	c, err := requireSidecar()
+	if err != nil {
+		return err
+	}
+	return c.PauseDomain(domain)
 }
 
 func SidecarResumeDomain(domain string) error {
-	log.Printf("sidecar: resume domain %s (stub)", domain)
-	return nil
+	c, err := requireSidecar()
+	if err != nil {
+		return err
+	}
+	return c.ResumeDomain(domain)
+}
+
+// handleSidecarErr writes 503 when the sidecar is unconfigured and 502
+// otherwise. The legacy "warning saved anyway" path in HandleAddDomain is
+// preserved for back-compat.
+func handleSidecarErr(c *gin.Context, err error, fallbackMsg string) {
+	if errors.Is(err, sidecar.ErrSidecarUnconfigured) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "deliverability sidecar not configured"})
+		return
+	}
+	handleReturnError(c, errors.New(fallbackMsg+": "+err.Error()), http.StatusBadGateway)
 }
 
 // ── HTTP helpers ────────────────────────────────────────────────────────────
@@ -361,7 +426,7 @@ func HandleTestSend(c *gin.Context) {
 	from := "test@" + sd.Domain
 	result, err := SidecarTestSend(sd.Domain, req.To, from, req.Subject)
 	if err != nil {
-		handleReturnError(c, errors.New("test send failed: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "test send failed")
 		return
 	}
 
@@ -462,7 +527,7 @@ func HandleGetDomainStats(c *gin.Context) {
 	since := c.DefaultQuery("since", "24h")
 	result, err := SidecarGetStats(sd.Domain, since)
 	if err != nil {
-		handleReturnError(c, errors.New("stats unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "stats unavailable")
 		return
 	}
 
@@ -485,7 +550,7 @@ func HandleGetDomainReputation(c *gin.Context) {
 
 	result, err := SidecarGetReputation(sd.Domain)
 	if err != nil {
-		handleReturnError(c, errors.New("reputation data unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "reputation data unavailable")
 		return
 	}
 
@@ -508,7 +573,7 @@ func HandleGetDomainWarming(c *gin.Context) {
 
 	result, err := SidecarGetWarming(sd.Domain)
 	if err != nil {
-		handleReturnError(c, errors.New("warming data unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "warming data unavailable")
 		return
 	}
 
@@ -532,7 +597,7 @@ func HandleGetDomainBounces(c *gin.Context) {
 	since := c.DefaultQuery("since", "24h")
 	result, err := SidecarGetBounces(sd.Domain, since)
 	if err != nil {
-		handleReturnError(c, errors.New("bounce data unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "bounce data unavailable")
 		return
 	}
 
@@ -556,7 +621,7 @@ func HandlePauseDomain(c *gin.Context) {
 	}
 
 	if err := SidecarPauseDomain(sd.Domain); err != nil {
-		handleReturnError(c, errors.New("pause failed: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "pause failed")
 		return
 	}
 
@@ -587,7 +652,7 @@ func HandleResumeDomain(c *gin.Context) {
 	}
 
 	if err := SidecarResumeDomain(sd.Domain); err != nil {
-		handleReturnError(c, errors.New("resume failed: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "resume failed")
 		return
 	}
 

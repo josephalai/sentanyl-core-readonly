@@ -225,7 +225,7 @@ func HandleTenantSendingDomainTestSend(c *gin.Context) {
 	from := "test@" + sd.Domain
 	result, err := SidecarTestSend(sd.Domain, req.To, from, req.Subject)
 	if err != nil {
-		handleReturnError(c, errors.New("test send failed: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "test send failed")
 		return
 	}
 	var sidecarResp map[string]interface{}
@@ -307,7 +307,7 @@ func HandleGetTenantSendingDomainStats(c *gin.Context) {
 	since := c.DefaultQuery("since", "24h")
 	result, err := SidecarGetStats(sd.Domain, since)
 	if err != nil {
-		handleReturnError(c, errors.New("stats unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "stats unavailable")
 		return
 	}
 	c.Data(http.StatusOK, "application/json", result)
@@ -325,7 +325,7 @@ func HandleGetTenantSendingDomainReputation(c *gin.Context) {
 	}
 	result, err := SidecarGetReputation(sd.Domain)
 	if err != nil {
-		handleReturnError(c, errors.New("reputation data unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "reputation data unavailable")
 		return
 	}
 	c.Data(http.StatusOK, "application/json", result)
@@ -343,7 +343,7 @@ func HandleGetTenantSendingDomainWarming(c *gin.Context) {
 	}
 	result, err := SidecarGetWarming(sd.Domain)
 	if err != nil {
-		handleReturnError(c, errors.New("warming data unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "warming data unavailable")
 		return
 	}
 	c.Data(http.StatusOK, "application/json", result)
@@ -362,7 +362,7 @@ func HandleGetTenantSendingDomainBounces(c *gin.Context) {
 	since := c.DefaultQuery("since", "24h")
 	result, err := SidecarGetBounces(sd.Domain, since)
 	if err != nil {
-		handleReturnError(c, errors.New("bounce data unavailable: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "bounce data unavailable")
 		return
 	}
 	c.Data(http.StatusOK, "application/json", result)
@@ -379,7 +379,7 @@ func HandlePauseTenantSendingDomain(c *gin.Context) {
 		return
 	}
 	if err := SidecarPauseDomain(sd.Domain); err != nil {
-		handleReturnError(c, errors.New("pause failed: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "pause failed")
 		return
 	}
 	sd.Status = pkgmodels.DomainStatusPaused
@@ -399,7 +399,7 @@ func HandleResumeTenantSendingDomain(c *gin.Context) {
 		return
 	}
 	if err := SidecarResumeDomain(sd.Domain); err != nil {
-		handleReturnError(c, errors.New("resume failed: "+err.Error()), http.StatusBadGateway)
+		handleSidecarErr(c, err, "resume failed")
 		return
 	}
 	sd.Status = pkgmodels.DomainStatusActive
