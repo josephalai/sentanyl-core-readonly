@@ -101,7 +101,10 @@ func main() {
 	{
 		tenantAPI.GET("/profile", routes.HandleGetTenantProfile)
 		tenantAPI.PUT("/settings", routes.HandleUpdateTenantSettings)
-		tenantAPI.DELETE("/reset", routes.HandleTenantResetAllData)
+		// The Settings "Reset All Data" button posts to /reset-all-data;
+		// keep this aligned with the frontend contract at
+		// frontend/src/pages/settings/SettingsPage.tsx:402.
+		tenantAPI.DELETE("/reset-all-data", routes.HandleTenantResetAllData)
 
 		// Stripe Connect OAuth initiate + disconnect.
 		tenantAPI.GET("/stripe/connect", routes.HandleStripeConnectInitiate)
