@@ -837,8 +837,45 @@ func handleDeleteBadge(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func handleAssignBadgeToUser(c *gin.Context)  { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
-func handleRemoveBadgeFromUser(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+// handleAssignBadgeToUser pushes badgeId onto User.Badges, dedupe-safe.
+// Both :userId and :badgeId are public_ids (the rest of this file follows
+// the same convention for cross-entity routes).
+func handleAssignBadgeToUser(c *gin.Context) {
+	userPub := c.Param("userId")
+	badgePub := c.Param("badgeId")
+	var badge pkgmodels.Badge
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{"public_id": badgePub}).One(&badge); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
+		return
+	}
+	if err := db.GetCollection(pkgmodels.UserCollection).Update(
+		bson.M{"public_id": userPub},
+		bson.M{"$addToSet": bson.M{"badges": badge.Id}},
+	); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "badge_id": badge.Id.Hex()})
+}
+
+// handleRemoveBadgeFromUser pulls badgeId from User.Badges. No-op if absent.
+func handleRemoveBadgeFromUser(c *gin.Context) {
+	userPub := c.Param("userId")
+	badgePub := c.Param("badgeId")
+	var badge pkgmodels.Badge
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{"public_id": badgePub}).One(&badge); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
+		return
+	}
+	if err := db.GetCollection(pkgmodels.UserCollection).Update(
+		bson.M{"public_id": userPub},
+		bson.M{"$pull": bson.M{"badges": badge.Id}},
+	); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
 // ─── Tags ─────────────────────────────────────────────────
 
