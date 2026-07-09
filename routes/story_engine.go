@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/smtp"
 	"os"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/pkg/db"
+	"github.com/josephalai/sentanyl/pkg/emailer"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/utils"
 )
@@ -333,18 +333,9 @@ func getOnSentWait(en *pkgmodels.Enactment) (waitSeconds int, nextAction string)
 	return
 }
 
-// sendStoryEmail sends an email via MailHog SMTP directly.
+// sendStoryEmail sends an email via the EMAIL_PROVIDER-selected provider
+// (warmup router / PowerMTA / Brevo / plain SMTP-MailHog).
 func sendStoryEmail(from, to, subject, htmlBody, replyTo string) error {
-	smtpHost := os.Getenv("SMTP_HOST")
-	if smtpHost == "" {
-		smtpHost = "mailhog"
-	}
-	smtpPort := os.Getenv("SMTP_PORT")
-	if smtpPort == "" {
-		smtpPort = "1025"
-	}
-	addr := smtpHost + ":" + smtpPort
-
 	if from == "" {
 		from = "noreply@sentanyl.local"
 	}
@@ -361,7 +352,7 @@ func sendStoryEmail(from, to, subject, htmlBody, replyTo string) error {
 	buf.WriteString("\r\n")
 	buf.WriteString(htmlBody)
 
-	return smtp.SendMail(addr, nil, from, []string{to}, buf.Bytes())
+	return emailer.SendRawFromEnv(from, to, buf.Bytes())
 }
 
 func sanitize(s string) string {

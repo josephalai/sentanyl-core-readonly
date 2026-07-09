@@ -70,12 +70,12 @@ func (c *Client) AddDomain(domain, selector, dkimPrivatePEM string) (*AddDomainR
 		return nil, ErrSidecarUnconfigured
 	}
 	body := map[string]string{
-		"domain":              domain,
-		"selector":            selector,
-		"dkim_private_pem":    dkimPrivatePEM,
+		"domain":               domain,
+		"selector":             selector,
+		"dkim_private_key_pem": dkimPrivatePEM,
 	}
 	var resp AddDomainResponse
-	if err := c.do("POST", "/v1/domains", body, &resp); err != nil {
+	if err := c.do("POST", "/domains", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -85,14 +85,14 @@ func (c *Client) DeleteDomain(domain string) error {
 	if !c.Configured() {
 		return ErrSidecarUnconfigured
 	}
-	return c.do("DELETE", "/v1/domains/"+url.PathEscape(domain), nil, nil)
+	return c.do("DELETE", "/domains/"+url.PathEscape(domain), nil, nil)
 }
 
 func (c *Client) TestSend(domain, to, from, subject string) ([]byte, error) {
 	if !c.Configured() {
 		return nil, ErrSidecarUnconfigured
 	}
-	return c.doRaw("POST", "/v1/domains/"+url.PathEscape(domain)+"/test-send", map[string]string{
+	return c.doRaw("POST", "/domains/"+url.PathEscape(domain)+"/test-send", map[string]string{
 		"to":      to,
 		"from":    from,
 		"subject": subject,
@@ -109,7 +109,7 @@ func (c *Client) Health() (*HealthResponse, error) {
 		return nil, ErrSidecarUnconfigured
 	}
 	var resp HealthResponse
-	if err := c.do("GET", "/v1/health", nil, &resp); err != nil {
+	if err := c.do("GET", "/health", nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -119,49 +119,49 @@ func (c *Client) Stats(domain, since string) ([]byte, error) {
 	if !c.Configured() {
 		return nil, ErrSidecarUnconfigured
 	}
-	return c.doRaw("GET", fmt.Sprintf("/v1/domains/%s/stats?since=%s", url.PathEscape(domain), url.QueryEscape(since)), nil)
+	return c.doRaw("GET", fmt.Sprintf("/stats/%s?since=%s", url.PathEscape(domain), url.QueryEscape(since)), nil)
 }
 
 func (c *Client) QueueDepth() ([]byte, error) {
 	if !c.Configured() {
 		return nil, ErrSidecarUnconfigured
 	}
-	return c.doRaw("GET", "/v1/queue/depth", nil)
+	return c.doRaw("GET", "/queue", nil)
 }
 
 func (c *Client) Reputation(domain string) ([]byte, error) {
 	if !c.Configured() {
 		return nil, ErrSidecarUnconfigured
 	}
-	return c.doRaw("GET", "/v1/domains/"+url.PathEscape(domain)+"/reputation", nil)
+	return c.doRaw("GET", "/reputation/"+url.PathEscape(domain), nil)
 }
 
 func (c *Client) Warming(domain string) ([]byte, error) {
 	if !c.Configured() {
 		return nil, ErrSidecarUnconfigured
 	}
-	return c.doRaw("GET", "/v1/domains/"+url.PathEscape(domain)+"/warming", nil)
+	return c.doRaw("GET", "/warming/"+url.PathEscape(domain), nil)
 }
 
 func (c *Client) Bounces(domain, since string) ([]byte, error) {
 	if !c.Configured() {
 		return nil, ErrSidecarUnconfigured
 	}
-	return c.doRaw("GET", fmt.Sprintf("/v1/domains/%s/bounces?since=%s", url.PathEscape(domain), url.QueryEscape(since)), nil)
+	return c.doRaw("GET", fmt.Sprintf("/bounces/%s?since=%s", url.PathEscape(domain), url.QueryEscape(since)), nil)
 }
 
 func (c *Client) PauseDomain(domain string) error {
 	if !c.Configured() {
 		return ErrSidecarUnconfigured
 	}
-	return c.do("POST", "/v1/domains/"+url.PathEscape(domain)+"/pause", nil, nil)
+	return c.do("POST", "/queue/"+url.PathEscape(domain)+"/pause", nil, nil)
 }
 
 func (c *Client) ResumeDomain(domain string) error {
 	if !c.Configured() {
 		return ErrSidecarUnconfigured
 	}
-	return c.do("POST", "/v1/domains/"+url.PathEscape(domain)+"/resume", nil, nil)
+	return c.do("POST", "/queue/"+url.PathEscape(domain)+"/resume", nil, nil)
 }
 
 // do issues a JSON request and decodes the response into out (if non-nil).
