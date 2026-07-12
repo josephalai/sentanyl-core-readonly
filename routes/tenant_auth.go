@@ -12,6 +12,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/pkg/utils"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
@@ -383,22 +384,42 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 		update["business_name"] = req.BusinessName
 	}
 	if req.StripeSecretKey != "" {
-		update["stripe_secret_key"] = req.StripeSecretKey
+		enc, err := utils.EncryptSecret(req.StripeSecretKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to secure stripe key"})
+			return
+		}
+		update["stripe_secret_key"] = enc
 	}
 	if req.StripePublicKey != "" {
 		update["stripe_public_key"] = req.StripePublicKey
 	}
 	if req.StripeWebhookSecret != "" {
-		update["stripe_webhook_secret"] = req.StripeWebhookSecret
+		enc, err := utils.EncryptSecret(req.StripeWebhookSecret)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to secure webhook secret"})
+			return
+		}
+		update["stripe_webhook_secret"] = enc
 	}
 	if req.MailgunAPIKey != "" {
-		update["mailgun_api_key"] = req.MailgunAPIKey
+		enc, err := utils.EncryptSecret(req.MailgunAPIKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to secure mailgun key"})
+			return
+		}
+		update["mailgun_api_key"] = enc
 	}
 	if req.MailgunDomain != "" {
 		update["mailgun_domain"] = req.MailgunDomain
 	}
 	if req.BrevoAPIKey != "" {
-		update["brevo_api_key"] = req.BrevoAPIKey
+		enc, err := utils.EncryptSecret(req.BrevoAPIKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to secure brevo key"})
+			return
+		}
+		update["brevo_api_key"] = enc
 	}
 	if req.CertificatesDefaultEnabled != nil {
 		update["certificates_default_enabled"] = *req.CertificatesDefaultEnabled
