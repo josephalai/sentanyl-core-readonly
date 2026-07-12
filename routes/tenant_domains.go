@@ -2,6 +2,7 @@ package routes
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -140,6 +141,9 @@ func HandleAdoptTenantDomain(c *gin.Context) {
 
 	var req struct {
 		Hostname string `json:"hostname" binding:"required"`
+		// Verify marks the adopted row is_verified so domain-scoped public
+		// routes resolve by Host in e2e (no real DNS in the harness).
+		Verify bool `json:"verify"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "hostname is required"})
@@ -182,10 +186,17 @@ func HandleAdoptTenantDomain(c *gin.Context) {
 	domain := models.NewTenantDomain(hostname, tenantID)
 	domain.DNSRecords.CNAME = "proxy.sentanyl.com"
 	domain.DNSRecords.TXT = "sentanyl-verify=" + domain.PublicId
+	domain.IsVerified = req.Verify
 	if err := col.Insert(domain); err != nil {
 		log.Println("adopt-domain: insert failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to adopt domain"})
 		return
+	}
+
+	// Mirror production behavior: a verified domain auto-provisions email
+	// sending for its parent domain (no-op for localhost/dev hosts).
+	if req.Verify {
+		go AutoProvisionEmailForDomain(tenantID, hostname)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -210,18 +221,68 @@ func HandleVerifyTenantDomain(c *gin.Context) {
 		return
 	}
 
-	err := db.GetCollection(models.DomainCollection).Update(
-		bson.M{
-			"_id":       bson.ObjectIdHex(domainID),
-			"tenant_id": tenantID,
-		},
-		bson.M{"$set": bson.M{"is_verified": true}},
-	)
-	if err != nil {
+	var td models.TenantDomain
+	if err := db.GetCollection(models.DomainCollection).Find(bson.M{
+		"_id":       bson.ObjectIdHex(domainID),
+		"tenant_id": tenantID,
+	}).One(&td); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		return
+	}
+
+	// Ownership proof: the tenant must publish the TXT challenge before the
+	// domain verifies. Previously this endpoint marked any hostname verified
+	// unconditionally, which let a tenant claim domains they don't control
+	// (verified tenant_domains scope public form/checkout resolution).
+	// SENTANYL_E2E_MODE keeps the harness bypass; localhost hosts are always
+	// allowed for dev.
+	if os.Getenv("SENTANYL_E2E_MODE") != "1" && !isDevHostname(td.Hostname) {
+		if !domainTXTChallengePresent(td.Hostname, td.DNSRecords.TXT) {
+			c.JSON(http.StatusPreconditionFailed, gin.H{
+				"error":    "verification TXT record not found",
+				"expected": gin.H{"type": "TXT", "name": "_sentanyl." + td.Hostname, "value": td.DNSRecords.TXT},
+			})
+			return
+		}
+	}
+
+	if err := db.GetCollection(models.DomainCollection).UpdateId(td.Id,
+		bson.M{"$set": bson.M{"is_verified": true}}); err != nil {
 		log.Println("Error verifying domain:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify domain"})
 		return
 	}
 
+	// A verified website domain automatically becomes an email sending
+	// domain for its registrable parent (DKIM key + PowerMTA vmta via the
+	// sidecar + sending_domains row). Best-effort — the DNS records the
+	// tenant must publish appear on the email Domains page.
+	go AutoProvisionEmailForDomain(tenantID, td.Hostname)
+
 	c.JSON(http.StatusOK, gin.H{"status": "domain verified"})
+}
+
+// domainTXTChallengePresent looks up TXT records at _sentanyl.<hostname> and
+// reports whether the stored challenge value is among them.
+func domainTXTChallengePresent(hostname, challenge string) bool {
+	if challenge == "" {
+		return false
+	}
+	records, err := net.LookupTXT("_sentanyl." + hostname)
+	if err != nil {
+		return false
+	}
+	for _, r := range records {
+		if strings.TrimSpace(r) == challenge {
+			return true
+		}
+	}
+	return false
+}
+
+// isDevHostname allows local development hosts to verify without DNS.
+func isDevHostname(hostname string) bool {
+	return hostname == "localhost" ||
+		strings.HasSuffix(hostname, ".localhost") ||
+		strings.HasSuffix(hostname, ".lvh.me")
 }

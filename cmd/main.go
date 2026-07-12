@@ -91,6 +91,7 @@ func main() {
 	r.POST("/api/tenant/login", routes.HandleTenantLogin)
 	r.POST("/api/customer/login", routes.HandleCustomerLogin)
 	r.POST("/api/customer/set-password", routes.HandleCustomerSetPassword)
+	r.POST("/api/customer/request-reset", routes.HandleCustomerRequestReset)
 
 	// Stripe Connect OAuth callback (public — auth is via the state token).
 	r.GET("/api/tenant/stripe/oauth/callback", routes.HandleStripeConnectCallback)

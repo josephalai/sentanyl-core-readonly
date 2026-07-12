@@ -77,41 +77,8 @@ func HandleAddTenantSendingDomain(c *gin.Context) {
 		return
 	}
 
-	privPEM, pubBase64, err := GenerateDKIMKeyPair()
+	sd, _, sidecarOK, err := ProvisionSendingDomain(tenantHex, req.Domain, req.Selector)
 	if err != nil {
-		handleReturnError(c, errors.New("failed to generate DKIM key pair"), http.StatusInternalServerError)
-		return
-	}
-
-	vmta := "vm-" + req.Domain
-	sidecarOK := false
-	sidecarResp, err := SidecarAddDomain(req.Domain, req.Selector, privPEM)
-	if err != nil {
-		log.Printf("sidecar add domain warning (will save anyway): %v", err)
-	} else {
-		sidecarOK = true
-		if sidecarResp.VMTA != "" {
-			vmta = sidecarResp.VMTA
-		}
-	}
-
-	parentDom := ParentDomain(req.Domain)
-	dnsRecords := FormatDNSRecords(req.Selector, req.Domain, parentDom, pubBase64, ServerIP)
-
-	sd := pkgmodels.NewSendingDomain()
-	sd.CreatorId = tenantHex
-	sd.Domain = req.Domain
-	sd.Selector = req.Selector
-	sd.VMTA = vmta
-	sd.PublicKey = pubBase64
-	sd.PrivateKey = privPEM
-	sd.DNSRecords = dnsRecords
-	sd.SetCreated()
-
-	if err := db.GetCollection(pkgmodels.SendingDomainCollection).Insert(sd); err != nil {
-		if sidecarOK {
-			_ = SidecarDeleteDomain(req.Domain)
-		}
 		handleReturnError(c, errors.New("could not save domain"), http.StatusInternalServerError)
 		return
 	}
@@ -192,6 +159,9 @@ func HandleVerifyTenantSendingDomainDNS(c *gin.Context) {
 		sd.Status = pkgmodels.DomainStatusActive
 		sd.SetUpdated()
 		_ = db.GetCollection(pkgmodels.SendingDomainCollection).UpdateId(sd.Id, sd)
+		// First active sending domain becomes the tenant's default
+		// from-domain (password-setup emails, coaching mail, campaigns).
+		MaybeSetTenantFromDomain(tenantHex, sd.Domain)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":       pkgmodels.HttpResponseStatusOK,
