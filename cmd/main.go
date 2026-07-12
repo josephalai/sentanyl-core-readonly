@@ -131,6 +131,11 @@ func main() {
 		tenantAPI.POST("/billing/change-plan", routes.HandleChangeBillingPlan)
 		tenantAPI.POST("/billing/portal-session", routes.HandleCreateBillingPortalSession)
 
+		// Machine API key (tenant send API + MCP) — self-serve mint/rotate/revoke.
+		tenantAPI.GET("/settings/api-key", routes.HandleGetTenantAPIKey)
+		tenantAPI.POST("/settings/api-key", routes.HandleMintTenantAPIKey)
+		tenantAPI.DELETE("/settings/api-key", routes.HandleRevokeTenantAPIKey)
+
 		// Stripe Connect OAuth initiate + disconnect.
 		tenantAPI.GET("/stripe/connect", routes.HandleStripeConnectInitiate)
 		tenantAPI.DELETE("/stripe/connect", routes.HandleStripeConnectDisconnect)
