@@ -15,6 +15,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/db"
 	httputil "github.com/josephalai/sentanyl/pkg/http"
 	"github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/pkg/plans"
 )
 
 // HandlePlatformStripeWebhook receives Stripe events for PLATFORM billing
@@ -54,7 +55,7 @@ func HandlePlatformStripeWebhook(c *gin.Context) {
 	switch evt.Type {
 	case "checkout.session.completed":
 		err = platformCheckoutCompleted(evt.Data.Object)
-	case "customer.subscription.updated":
+	case "customer.subscription.created", "customer.subscription.updated":
 		err = platformSubscriptionUpdated(evt.Data.Object)
 	case "customer.subscription.deleted":
 		err = platformSubscriptionDeleted(evt.Data.Object)
@@ -133,6 +134,13 @@ func platformSubscriptionUpdated(raw json.RawMessage) error {
 		Status   string            `json:"status"`
 		Customer string            `json:"customer"`
 		Metadata map[string]string `json:"metadata"`
+		Items    struct {
+			Data []struct {
+				Price struct {
+					ID string `json:"id"`
+				} `json:"price"`
+			} `json:"data"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(raw, &sub); err != nil {
 		return err
@@ -144,6 +152,18 @@ func platformSubscriptionUpdated(raw json.RawMessage) error {
 	}
 
 	set := bson.M{"platform_subscription_id": sub.ID}
+	// Sync the plan tier: the item's Price is authoritative (it's what the
+	// tenant pays); subscription metadata is the fallback for prices that
+	// aren't in this deployment's env mapping.
+	if len(sub.Items.Data) > 0 {
+		if tier, ok := plans.TierForPriceID(sub.Items.Data[0].Price.ID); ok {
+			set["plan_tier"] = tier
+		} else if _, ok := plans.ByTier(sub.Metadata["plan_tier"]); ok {
+			set["plan_tier"] = sub.Metadata["plan_tier"]
+		}
+	} else if _, ok := plans.ByTier(sub.Metadata["plan_tier"]); ok {
+		set["plan_tier"] = sub.Metadata["plan_tier"]
+	}
 	unset := bson.M{}
 	switch sub.Status {
 	case "trialing":
@@ -161,6 +181,19 @@ func platformSubscriptionUpdated(raw json.RawMessage) error {
 		set["subscription_status"] = "canceled"
 	default: // incomplete — no change
 		return nil
+	}
+
+	// On a tier upgrade, release limit-held contacts and restart the limit
+	// clock — covers checkout-driven upgrades that bypass /billing/change-plan.
+	if newTier, ok := set["plan_tier"].(string); ok {
+		var current models.Tenant
+		if err := db.GetCollection(models.TenantCollection).FindId(tenantID).
+			Select(bson.M{"plan_tier": 1}).One(&current); err == nil {
+			if plans.ForTenant(newTier).ContactLimit > plans.ForTenant(current.PlanTier).ContactLimit {
+				plans.ReleaseHeldContacts(tenantID)
+				unset["limit_grace_started_at"] = ""
+			}
+		}
 	}
 
 	update := bson.M{"$set": set}

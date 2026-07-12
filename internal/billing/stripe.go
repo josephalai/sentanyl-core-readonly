@@ -83,7 +83,7 @@ const minTrialLead = 48 * time.Hour
 
 // CreateSubscriptionCheckoutSession creates a subscription-mode Checkout
 // Session for the platform plan, preserving the tenant's remaining trial.
-func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDHex, successURL, cancelURL string, trialEnd *time.Time) (string, error) {
+func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDHex, planTier, successURL, cancelURL string, trialEnd *time.Time) (string, error) {
 	form := url.Values{}
 	form.Set("mode", "subscription")
 	form.Set("customer", customerID)
@@ -91,6 +91,9 @@ func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDH
 	form.Set("line_items[0][quantity]", "1")
 	form.Set("client_reference_id", tenantIDHex)
 	form.Set("subscription_data[metadata][tenant_id]", tenantIDHex)
+	if planTier != "" {
+		form.Set("subscription_data[metadata][plan_tier]", planTier)
+	}
 	form.Set("success_url", successURL)
 	form.Set("cancel_url", cancelURL)
 	if trialEnd != nil && time.Until(*trialEnd) > minTrialLead {
@@ -107,6 +110,87 @@ func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDH
 		return "", fmt.Errorf("stripe returned no checkout URL")
 	}
 	return out.URL, nil
+}
+
+// stripeGet sends a GET to the Stripe API, surfacing Stripe error messages.
+func stripeGet(secretKey, path string, out interface{}) error {
+	req, err := http.NewRequest("GET", "https://api.stripe.com"+path, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(secretKey, "")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("stripe API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var envelope struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	raw := json.RawMessage{}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return fmt.Errorf("failed to decode stripe response: %w", err)
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return fmt.Errorf("failed to decode stripe response: %w", err)
+	}
+	if envelope.Error != nil {
+		return fmt.Errorf("stripe error: %s", envelope.Error.Message)
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("failed to decode stripe response: %w", err)
+		}
+	}
+	return nil
+}
+
+// SubscriptionItem is the single line item on a platform subscription.
+type SubscriptionItem struct {
+	ItemID  string
+	PriceID string
+	Status  string
+}
+
+// GetSubscriptionItem fetches the subscription's first item — platform
+// subscriptions always have exactly one (the plan Price).
+func GetSubscriptionItem(secretKey, subscriptionID string) (SubscriptionItem, error) {
+	var out struct {
+		Status string `json:"status"`
+		Items  struct {
+			Data []struct {
+				ID    string `json:"id"`
+				Price struct {
+					ID string `json:"id"`
+				} `json:"price"`
+			} `json:"data"`
+		} `json:"items"`
+	}
+	if err := stripeGet(secretKey, "/v1/subscriptions/"+subscriptionID, &out); err != nil {
+		return SubscriptionItem{}, err
+	}
+	if len(out.Items.Data) == 0 {
+		return SubscriptionItem{}, fmt.Errorf("subscription %s has no items", subscriptionID)
+	}
+	return SubscriptionItem{
+		ItemID:  out.Items.Data[0].ID,
+		PriceID: out.Items.Data[0].Price.ID,
+		Status:  out.Status,
+	}, nil
+}
+
+// UpdateSubscriptionPrice swaps the subscription's item to a new Price with
+// proration — the Stripe mechanics of a tier upgrade/downgrade.
+func UpdateSubscriptionPrice(secretKey, subscriptionID, itemID, newPriceID string) error {
+	form := url.Values{}
+	form.Set("items[0][id]", itemID)
+	form.Set("items[0][price]", newPriceID)
+	form.Set("proration_behavior", "create_prorations")
+	return stripePost(secretKey, "/v1/subscriptions/"+subscriptionID, form, nil)
 }
 
 // CreatePortalSession creates a Stripe Billing Portal session so the tenant

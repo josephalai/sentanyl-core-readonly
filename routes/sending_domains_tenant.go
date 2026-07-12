@@ -14,6 +14,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/pkg/plans"
 )
 
 // JWT-aware sending-domain handlers. The frontend at
@@ -77,11 +78,27 @@ func HandleAddTenantSendingDomain(c *gin.Context) {
 		return
 	}
 
+	// Plan cap: sending domains are a hard per-tier limit (no grace window).
+	var tenant pkgmodels.Tenant
+	if err := db.GetCollection(pkgmodels.TenantCollection).FindId(auth.GetTenantObjectID(c)).One(&tenant); err == nil {
+		if allowed, plan, usage := plans.DomainCreationAllowed(&tenant); !allowed {
+			c.JSON(http.StatusPaymentRequired, gin.H{
+				"status": "error",
+				"error":  "sending-domain limit reached for your plan — upgrade to add more",
+				"code":   "domain_limit_reached",
+				"plan":   plan,
+				"usage":  usage,
+			})
+			return
+		}
+	}
+
 	sd, _, sidecarOK, err := ProvisionSendingDomain(tenantHex, req.Domain, req.Selector)
 	if err != nil {
 		handleReturnError(c, errors.New("could not save domain"), http.StatusInternalServerError)
 		return
 	}
+	plans.Invalidate(auth.GetTenantObjectID(c))
 
 	resp := gin.H{"status": pkgmodels.HttpResponseStatusOK, "domain": sd}
 	if !sidecarOK {
@@ -141,6 +158,7 @@ func HandleDeleteTenantSendingDomain(c *gin.Context) {
 		handleReturnUpdateError(c, err)
 		return
 	}
+	plans.Invalidate(auth.GetTenantObjectID(c))
 	c.JSON(http.StatusOK, gin.H{"status": pkgmodels.HttpResponseStatusOK, "domain": sd})
 }
 

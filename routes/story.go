@@ -10,6 +10,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/pkg/plans"
 	"github.com/josephalai/sentanyl/pkg/utils"
 )
 
@@ -988,11 +989,23 @@ func handleGetUser(c *gin.Context) {
 func handleCreateUser(c *gin.Context) {
 	var item pkgmodels.User
 	c.ShouldBindJSON(&item)
+	// Admin-driven creation gets an explicit refusal (public capture paths
+	// hold the contact instead) — the admin can act on the upgrade prompt.
+	if tid := auth.GetTenantObjectID(c); tid != "" && item.Subscribed && plans.ContactCreationBlocked(tid) {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "contact limit reached — upgrade your plan to add more contacts",
+			"code":  "contact_limit_reached",
+		})
+		return
+	}
 	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
 	db.GetCollection(pkgmodels.UserCollection).Insert(item)
+	if item.TenantID != "" {
+		plans.Invalidate(item.TenantID)
+	}
 	c.JSON(http.StatusOK, gin.H{"user": item})
 }
 
@@ -1029,7 +1042,11 @@ func HandleRegisterUser(c *gin.Context) {
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
+	plans.ApplyHold(&item)
 	db.GetCollection(pkgmodels.UserCollection).Insert(item)
+	if item.TenantID != "" {
+		plans.Invalidate(item.TenantID)
+	}
 	c.JSON(http.StatusOK, gin.H{"user": item})
 }
 

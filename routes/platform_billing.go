@@ -13,14 +13,28 @@ import (
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/pkg/plans"
 )
 
 // Platform billing endpoints — charging the tenant for Sentanyl itself via
 // Stripe Billing on the platform account. These must be registered on the
 // UNGATED tenant group so an unpaid tenant can still reach them to pay.
 
-func platformStripeKey() string  { return os.Getenv("STRIPE_PLATFORM_SECRET_KEY") }
-func platformPriceID() string    { return os.Getenv("STRIPE_PLATFORM_PRICE_ID") }
+func platformStripeKey() string { return os.Getenv("STRIPE_PLATFORM_SECRET_KEY") }
+
+// HandleListBillingPlans returns the public tier catalog, with each tier's
+// availability (a tier is offered only when its Stripe Price is configured).
+func HandleListBillingPlans(c *gin.Context) {
+	type planOut struct {
+		plans.Plan
+		Available bool `json:"available"`
+	}
+	out := make([]planOut, 0, len(plans.All))
+	for _, p := range plans.All {
+		out = append(out, planOut{Plan: p, Available: plans.StripePriceID(p.Tier) != ""})
+	}
+	c.JSON(http.StatusOK, gin.H{"plans": out})
+}
 
 // HandleGetBillingStatus returns the tenant's platform subscription state,
 // computed with the same SubscriptionAllowed logic the enforcement middleware
@@ -44,14 +58,28 @@ func HandleGetBillingStatus(c *gin.Context) {
 			daysLeft = int(d.Hours()/24) + 1
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"subscription_status": tenant.SubscriptionStatus,
 		"trial_ends_at":       tenant.TrialEndsAt,
 		"past_due_at":         tenant.PastDueAt,
 		"has_subscription":    tenant.PlatformSubscriptionID != "",
 		"gated":               !auth.SubscriptionAllowed(&tenant, now),
 		"days_left":           daysLeft,
-	})
+	}
+	if limits, err := plans.ContactLimitStatus(&tenant, now); err == nil {
+		resp["plan_tier"] = limits.Plan.Tier
+		resp["plan"] = limits.Plan
+		resp["usage"] = limits.Usage
+		resp["limit_state"] = limits.State
+		if limits.GraceEndsAt != nil {
+			resp["grace_ends_at"] = limits.GraceEndsAt
+		}
+	} else {
+		log.Printf("[platform billing] limit status: %v", err)
+		resp["plan_tier"] = plans.ForTenant(tenant.PlanTier).Tier
+		resp["plan"] = plans.ForTenant(tenant.PlanTier)
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // HandleCreateBillingCheckoutSession lazily creates the platform Stripe
@@ -63,7 +91,20 @@ func HandleCreateBillingCheckoutSession(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	key, priceID := platformStripeKey(), platformPriceID()
+	var body struct {
+		Tier string `json:"tier"`
+	}
+	_ = c.ShouldBindJSON(&body) // empty body → default tier below
+
+	tier := body.Tier
+	if tier == "" {
+		tier = plans.DefaultTier
+	}
+	if _, ok := plans.ByTier(tier); !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown plan tier"})
+		return
+	}
+	key, priceID := platformStripeKey(), plans.StripePriceID(tier)
 	if key == "" || priceID == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "platform billing is not configured"})
 		return
@@ -94,7 +135,7 @@ func HandleCreateBillingCheckoutSession(c *gin.Context) {
 
 	base := publicAPIBase()
 	url, err := billing.CreateSubscriptionCheckoutSession(
-		key, priceID, tenant.PlatformStripeCustomerID, tenantID.Hex(),
+		key, priceID, tenant.PlatformStripeCustomerID, tenantID.Hex(), tier,
 		base+"/billing?checkout=success", base+"/billing?checkout=cancel",
 		tenant.TrialEndsAt,
 	)
@@ -104,6 +145,90 @@ func HandleCreateBillingCheckoutSession(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// HandleChangeBillingPlan swaps an active subscription to a different tier
+// with proration. Upgrades apply immediately; downgrades are refused (409)
+// while current usage exceeds the target tier's limits.
+func HandleChangeBillingPlan(c *gin.Context) {
+	tenantID := auth.GetTenantObjectID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Tier string `json:"tier"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Tier == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tier is required"})
+		return
+	}
+	target, ok := plans.ByTier(body.Tier)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown plan tier"})
+		return
+	}
+	key, priceID := platformStripeKey(), plans.StripePriceID(target.Tier)
+	if key == "" || priceID == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "this plan is not available yet"})
+		return
+	}
+
+	var tenant models.Tenant
+	if err := db.GetCollection(models.TenantCollection).FindId(tenantID).One(&tenant); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "tenant not found"})
+		return
+	}
+	if tenant.PlatformSubscriptionID == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "no active subscription — subscribe first"})
+		return
+	}
+	current := plans.ForTenant(tenant.PlanTier)
+	if current.Tier == target.Tier {
+		c.JSON(http.StatusOK, gin.H{"plan_tier": current.Tier, "changed": false})
+		return
+	}
+
+	// Downgrades must fit: refuse while usage exceeds the target's limits so a
+	// tenant can't dodge enforcement by paying less than their list costs.
+	if target.PriceUSD < current.PriceUSD {
+		usage, err := plans.GetUsage(tenantID)
+		if err == nil && (usage.Contacts > target.ContactLimit || usage.Domains > target.DomainLimit) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "current usage exceeds the limits of that plan",
+				"usage": usage,
+				"plan":  target,
+			})
+			return
+		}
+	}
+
+	item, err := billing.GetSubscriptionItem(key, tenant.PlatformSubscriptionID)
+	if err != nil {
+		log.Printf("[platform billing] get subscription item: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to load subscription"})
+		return
+	}
+	if err := billing.UpdateSubscriptionPrice(key, tenant.PlatformSubscriptionID, item.ItemID, priceID); err != nil {
+		log.Printf("[platform billing] update subscription price: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to change plan"})
+		return
+	}
+	// Set the tier immediately; the subscription.updated webhook confirms it.
+	if err := db.GetCollection(models.TenantCollection).UpdateId(tenantID,
+		bson.M{"$set": bson.M{"plan_tier": target.Tier}}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "plan changed in Stripe but failed to save — refresh"})
+		return
+	}
+	plans.Invalidate(tenantID)
+	released := 0
+	if target.PriceUSD > current.PriceUSD {
+		released = plans.ReleaseHeldContacts(tenantID)
+		// Fresh headroom: restart the limit clock at the new tier.
+		_ = db.GetCollection(models.TenantCollection).UpdateId(tenantID,
+			bson.M{"$unset": bson.M{"limit_grace_started_at": ""}})
+	}
+	c.JSON(http.StatusOK, gin.H{"plan_tier": target.Tier, "changed": true, "contacts_released": released})
 }
 
 // HandleCreateBillingPortalSession returns a Stripe Billing Portal URL for

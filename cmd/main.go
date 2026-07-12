@@ -126,7 +126,9 @@ func main() {
 
 		// Platform billing (charging the tenant for Sentanyl itself).
 		tenantAPI.GET("/billing", routes.HandleGetBillingStatus)
+		tenantAPI.GET("/billing/plans", routes.HandleListBillingPlans)
 		tenantAPI.POST("/billing/checkout-session", routes.HandleCreateBillingCheckoutSession)
+		tenantAPI.POST("/billing/change-plan", routes.HandleChangeBillingPlan)
 		tenantAPI.POST("/billing/portal-session", routes.HandleCreateBillingPortalSession)
 
 		// Stripe Connect OAuth initiate + disconnect.
