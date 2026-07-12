@@ -86,12 +86,16 @@ func main() {
 		})
 	}
 
-	// Public auth routes (no JWT required).
-	r.POST("/api/tenant/register", routes.HandleTenantRegister)
-	r.POST("/api/tenant/login", routes.HandleTenantLogin)
-	r.POST("/api/customer/login", routes.HandleCustomerLogin)
-	r.POST("/api/customer/set-password", routes.HandleCustomerSetPassword)
-	r.POST("/api/customer/request-reset", routes.HandleCustomerRequestReset)
+	// Public auth routes (no JWT required). Rate-limited per IP: auth endpoints
+	// throttle credential-stuffing/brute-force; request-reset is tighter because
+	// each call sends an email (email-bomb prevention).
+	authLimit := httputil.RateLimit(30, 15)
+	emailLimit := httputil.RateLimit(6, 6)
+	r.POST("/api/tenant/register", authLimit, routes.HandleTenantRegister)
+	r.POST("/api/tenant/login", authLimit, routes.HandleTenantLogin)
+	r.POST("/api/customer/login", authLimit, routes.HandleCustomerLogin)
+	r.POST("/api/customer/set-password", authLimit, routes.HandleCustomerSetPassword)
+	r.POST("/api/customer/request-reset", emailLimit, routes.HandleCustomerRequestReset)
 
 	// Stripe Connect OAuth callback (public — auth is via the state token).
 	r.GET("/api/tenant/stripe/oauth/callback", routes.HandleStripeConnectCallback)
