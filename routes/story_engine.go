@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,6 +42,37 @@ type StorySession struct {
 // RegisterStoryEngineRoutes wires internal story-start endpoint.
 func RegisterStoryEngineRoutes(r *gin.Engine) {
 	r.POST("/internal/story/start", handleInternalStartStory)
+}
+
+// HandleTestTickStories is the e2e fast-forward hook (SENTANYL_E2E_MODE=1
+// only — registered next to /internal/test/hydrate-certs in main). It
+// rewinds sent_at on active sessions by `seconds` and synchronously runs one
+// scheduler pass so time-based story waits can be exercised without sleeping.
+func HandleTestTickStories(c *gin.Context) {
+	var req struct {
+		Seconds      int    `json:"seconds"`
+		UserPublicId string `json:"user_public_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Seconds <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "seconds (>0) is required"})
+		return
+	}
+	sel := bson.M{"status": "active"}
+	if req.UserPublicId != "" {
+		sel["user_public_id"] = req.UserPublicId
+	}
+	var sessions []StorySession
+	if err := db.GetCollection(storySessionCollection).Find(sel).All(&sessions); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, s := range sessions {
+		db.GetCollection(storySessionCollection).UpdateId(s.Id, bson.M{
+			"$set": bson.M{"sent_at": s.SentAt.Add(-time.Duration(req.Seconds) * time.Second)},
+		})
+	}
+	advanceExpiredSessions()
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "rewound_seconds": req.Seconds, "sessions": len(sessions)})
 }
 
 func handleInternalStartStory(c *gin.Context) {
@@ -82,6 +114,7 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 	}
 	// Use the last (most recently deployed) story.
 	story := stories[len(stories)-1]
+	hydrateStoryGraph(&story)
 
 	if len(story.Storylines) == 0 {
 		return fmt.Errorf("story %q has no storylines", storyName)
@@ -200,6 +233,7 @@ func advanceSession(s StorySession) {
 			log.Printf("story engine: story not found for session %s: %v", s.PublicId, err)
 			return
 		}
+		hydrateStoryGraph(&story)
 		if s.StorylineIdx >= len(story.Storylines) {
 			markSessionComplete(s)
 			return
@@ -267,6 +301,83 @@ func markSessionComplete(s StorySession) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// hydrateStoryGraph reconstructs the embedded Storylines→Acts→Scenes/Triggers
+// tree from the id references the script deployer persists (the inverse of
+// Story.ReadyMongoStore, which strips embedded docs and stores each entity in
+// its own collection). Stories inserted with embedded storylines are left
+// untouched. Without this, form-triggered stories deployed via /api/script
+// fail with "has no storylines".
+func hydrateStoryGraph(story *pkgmodels.Story) {
+	if story == nil || len(story.Storylines) > 0 ||
+		story.StorylineIds == nil || len(story.StorylineIds.Ids) == 0 {
+		return
+	}
+	for _, slID := range story.StorylineIds.Ids {
+		var sl pkgmodels.Storyline
+		if err := db.GetCollection(pkgmodels.StorylineCollection).FindId(slID).One(&sl); err != nil {
+			continue
+		}
+		if len(sl.Acts) == 0 && sl.ActIds != nil {
+			for _, actID := range sl.ActIds.Ids {
+				var en pkgmodels.Enactment
+				if err := db.GetCollection(pkgmodels.EnactmentCollection).FindId(actID).One(&en); err != nil {
+					continue
+				}
+				hydrateEnactment(&en)
+				sl.Acts = append(sl.Acts, &en)
+			}
+			sort.Slice(sl.Acts, func(i, j int) bool { return sl.Acts[i].NaturalOrder < sl.Acts[j].NaturalOrder })
+		}
+		story.Storylines = append(story.Storylines, &sl)
+	}
+	sort.Slice(story.Storylines, func(i, j int) bool {
+		return story.Storylines[i].NaturalOrder < story.Storylines[j].NaturalOrder
+	})
+}
+
+func hydrateEnactment(en *pkgmodels.Enactment) {
+	if en.SendScene == nil && en.SendSceneId != nil && en.SendSceneId.Id.Valid() {
+		en.SendScene = loadScene(en.SendSceneId.Id)
+	}
+	if len(en.SendScenes) == 0 && en.SendScenesIds != nil {
+		for _, scID := range en.SendScenesIds.Ids {
+			if sc := loadScene(scID); sc != nil {
+				en.SendScenes = append(en.SendScenes, sc)
+			}
+		}
+	}
+	if len(en.OnEvent) == 0 && en.OnEventIds != nil {
+		en.OnEvent = map[string][]*pkgmodels.Trigger{}
+		for _, trID := range en.OnEventIds.Ids {
+			var tr pkgmodels.Trigger
+			if err := db.GetCollection(pkgmodels.TriggerCollection).FindId(trID).One(&tr); err != nil {
+				continue
+			}
+			if tr.DoAction == nil && tr.DoActionId != nil && tr.DoActionId.Id.Valid() {
+				var act pkgmodels.Action
+				if err := db.GetCollection(pkgmodels.ActionCollection).FindId(tr.DoActionId.Id).One(&act); err == nil {
+					tr.DoAction = &act
+				}
+			}
+			en.OnEvent[tr.TriggerType] = append(en.OnEvent[tr.TriggerType], &tr)
+		}
+	}
+}
+
+func loadScene(id bson.ObjectId) *pkgmodels.Scene {
+	var sc pkgmodels.Scene
+	if err := db.GetCollection(pkgmodels.SceneCollection).FindId(id).One(&sc); err != nil {
+		return nil
+	}
+	if sc.Message == nil && sc.MessageId != nil && sc.MessageId.Id.Valid() {
+		var msg pkgmodels.Message
+		if err := db.GetCollection(pkgmodels.MessageCollection).FindId(sc.MessageId.Id).One(&msg); err == nil {
+			sc.Message = &msg
+		}
+	}
+	return &sc
+}
 
 func getSceneFromEnactment(en *pkgmodels.Enactment, idx int) *pkgmodels.Scene {
 	if en == nil {

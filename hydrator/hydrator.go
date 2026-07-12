@@ -559,7 +559,7 @@ if genErr != nil {
 log.Printf("[Hydrator] cert %s: AI failed (%v) — using deterministic template", cert.PublicId, genErr)
 htmlContent = buildCertificateHTMLFallback(&cert)
 } else {
-htmlContent = generated
+htmlContent = stripCodeFences(generated)
 }
 } else {
 htmlContent = buildCertificateHTMLFallback(&cert)
@@ -633,6 +633,25 @@ if k := os.Getenv("GEMINI_API_KEY"); k != "" {
 return k
 }
 return ""
+}
+
+// stripCodeFences removes markdown code fences (```html … ```) that LLMs
+// wrap around generated HTML — they otherwise render as literal text on the
+// certificate PDF.
+func stripCodeFences(s string) string {
+s = strings.TrimSpace(s)
+if strings.HasPrefix(s, "```") {
+if nl := strings.Index(s, "\n"); nl >= 0 {
+s = s[nl+1:]
+} else {
+s = strings.TrimPrefix(s, "```")
+}
+}
+s = strings.TrimSpace(s)
+if strings.HasSuffix(s, "```") {
+s = s[:len(s)-3]
+}
+return strings.TrimSpace(s)
 }
 
 func stripUnsafeHTML(html string) string {

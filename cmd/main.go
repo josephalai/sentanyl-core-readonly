@@ -88,6 +88,10 @@ func main() {
 		// status / trial / past-due timestamps directly so enforcement can be
 		// exercised without live Stripe. Never registered in production.
 		r.POST("/internal/test/set-billing", routes.HandleTestSetBilling)
+		// Story-scheduler fast-forward for lifecycle/product flows: rewinds
+		// active story_sessions' sent_at and runs one synchronous scheduler
+		// pass so multi-day waits can be walked in seconds.
+		r.POST("/internal/test/tick-stories", routes.HandleTestTickStories)
 	}
 
 	// Public auth routes (no JWT required). Rate-limited per IP: auth endpoints
