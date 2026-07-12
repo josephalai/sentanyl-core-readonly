@@ -334,6 +334,7 @@ func HandleGetTenantProfile(c *gin.Context) {
 		"id":                            tenant.Id.Hex(),
 		"business_name":                 tenant.BusinessName,
 		"subscription_status":           tenant.SubscriptionStatus,
+		"trial_ends_at":                 tenant.TrialEndsAt,
 		"stripe_public_key":             tenant.StripePublicKey,
 		"has_stripe":                    tenant.StripeSecretKey != "" || tenant.StripeConnectAccountID != "",
 		"has_webhook_secret":            tenant.StripeWebhookSecret != "",

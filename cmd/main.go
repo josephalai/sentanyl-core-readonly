@@ -84,6 +84,10 @@ func main() {
 			h.RunCertsNow()
 			c.JSON(200, gin.H{"status": "ok"})
 		})
+		// Billing-state fixture for lifecycle flow 16: sets subscription
+		// status / trial / past-due timestamps directly so enforcement can be
+		// exercised without live Stripe. Never registered in production.
+		r.POST("/internal/test/set-billing", routes.HandleTestSetBilling)
 	}
 
 	// Public auth routes (no JWT required). Rate-limited per IP: auth endpoints
@@ -100,7 +104,12 @@ func main() {
 	// Stripe Connect OAuth callback (public — auth is via the state token).
 	r.GET("/api/tenant/stripe/oauth/callback", routes.HandleStripeConnectCallback)
 
-	// Protected tenant routes (require JWT).
+	// Platform billing webhook (public — auth is the Stripe signature).
+	r.POST("/api/platform/stripe/webhook", routes.HandlePlatformStripeWebhook)
+
+	// Protected tenant routes (require JWT). This UNGATED group carries the
+	// routes an unpaid tenant must still reach — profile, settings, and the
+	// billing endpoints themselves — so they can always get back to paying.
 	tenantAPI := r.Group("/api/tenant")
 	tenantAPI.Use(auth.RequireTenantAuth())
 	{
@@ -111,40 +120,51 @@ func main() {
 		// frontend/src/pages/settings/SettingsPage.tsx:402.
 		tenantAPI.DELETE("/reset-all-data", routes.HandleTenantResetAllData)
 
+		// Platform billing (charging the tenant for Sentanyl itself).
+		tenantAPI.GET("/billing", routes.HandleGetBillingStatus)
+		tenantAPI.POST("/billing/checkout-session", routes.HandleCreateBillingCheckoutSession)
+		tenantAPI.POST("/billing/portal-session", routes.HandleCreateBillingPortalSession)
+
 		// Stripe Connect OAuth initiate + disconnect.
 		tenantAPI.GET("/stripe/connect", routes.HandleStripeConnectInitiate)
 		tenantAPI.DELETE("/stripe/connect", routes.HandleStripeConnectDisconnect)
+	}
 
+	// Everything else on the tenant dashboard is GATED on the platform
+	// subscription (trial/active/past_due-in-grace pass; expired/canceled 402).
+	tenantGated := r.Group("/api/tenant")
+	tenantGated.Use(auth.RequireTenantAuth(), auth.RequirePlatformSubscription())
+	{
 		// Tenant custom domains
-		tenantAPI.POST("/domains", routes.HandleAddTenantDomain)
-		tenantAPI.GET("/domains", routes.HandleListTenantDomains)
-		tenantAPI.DELETE("/domains/:id", routes.HandleDeleteTenantDomain)
-		tenantAPI.POST("/domains/:id/verify", routes.HandleVerifyTenantDomain)
-		tenantAPI.POST("/domains/adopt", routes.HandleAdoptTenantDomain)
+		tenantGated.POST("/domains", routes.HandleAddTenantDomain)
+		tenantGated.GET("/domains", routes.HandleListTenantDomains)
+		tenantGated.DELETE("/domains/:id", routes.HandleDeleteTenantDomain)
+		tenantGated.POST("/domains/:id/verify", routes.HandleVerifyTenantDomain)
+		tenantGated.POST("/domains/adopt", routes.HandleAdoptTenantDomain)
 
 		// Context packs, brand profile, attribute schema
-		routes.RegisterContextPackRoutes(tenantAPI)
-		routes.RegisterContextPackRenderRoutes(tenantAPI)
+		routes.RegisterContextPackRoutes(tenantGated)
+		routes.RegisterContextPackRenderRoutes(tenantGated)
 
 		// Sending domain management (JWT-authenticated). Handlers read tenant
 		// identity from the JWT context and never accept legacy subscriber_id.
-		tenantAPI.POST("/sending-domain", routes.HandleAddTenantSendingDomain)
-		tenantAPI.GET("/sending-domains", routes.HandleListTenantSendingDomains)
-		tenantAPI.GET("/sending-domain/:domainId", routes.HandleGetTenantSendingDomain)
-		tenantAPI.DELETE("/sending-domain/:domainId", routes.HandleDeleteTenantSendingDomain)
-		tenantAPI.POST("/sending-domain/:domainId/verify-dns", routes.HandleVerifyTenantSendingDomainDNS)
-		tenantAPI.POST("/sending-domain/:domainId/test-send", routes.HandleTenantSendingDomainTestSend)
-		tenantAPI.GET("/sending-domain/:domainId/test-send-status", routes.HandleGetTenantSendingDomainTestSendStatus)
-		tenantAPI.GET("/sending-domain/:domainId/stats", routes.HandleGetTenantSendingDomainStats)
-		tenantAPI.GET("/sending-domain/:domainId/reputation", routes.HandleGetTenantSendingDomainReputation)
-		tenantAPI.GET("/sending-domain/:domainId/warming", routes.HandleGetTenantSendingDomainWarming)
-		tenantAPI.GET("/sending-domain/:domainId/bounces", routes.HandleGetTenantSendingDomainBounces)
-		tenantAPI.POST("/sending-domain/:domainId/pause", routes.HandlePauseTenantSendingDomain)
-		tenantAPI.POST("/sending-domain/:domainId/resume", routes.HandleResumeTenantSendingDomain)
+		tenantGated.POST("/sending-domain", routes.HandleAddTenantSendingDomain)
+		tenantGated.GET("/sending-domains", routes.HandleListTenantSendingDomains)
+		tenantGated.GET("/sending-domain/:domainId", routes.HandleGetTenantSendingDomain)
+		tenantGated.DELETE("/sending-domain/:domainId", routes.HandleDeleteTenantSendingDomain)
+		tenantGated.POST("/sending-domain/:domainId/verify-dns", routes.HandleVerifyTenantSendingDomainDNS)
+		tenantGated.POST("/sending-domain/:domainId/test-send", routes.HandleTenantSendingDomainTestSend)
+		tenantGated.GET("/sending-domain/:domainId/test-send-status", routes.HandleGetTenantSendingDomainTestSendStatus)
+		tenantGated.GET("/sending-domain/:domainId/stats", routes.HandleGetTenantSendingDomainStats)
+		tenantGated.GET("/sending-domain/:domainId/reputation", routes.HandleGetTenantSendingDomainReputation)
+		tenantGated.GET("/sending-domain/:domainId/warming", routes.HandleGetTenantSendingDomainWarming)
+		tenantGated.GET("/sending-domain/:domainId/bounces", routes.HandleGetTenantSendingDomainBounces)
+		tenantGated.POST("/sending-domain/:domainId/pause", routes.HandlePauseTenantSendingDomain)
+		tenantGated.POST("/sending-domain/:domainId/resume", routes.HandleResumeTenantSendingDomain)
 
 		// Story builder — stories, storylines, enactments, scenes, messages,
 		// triggers, actions, badges, tags, users, email lists, stats, etc.
-		routes.RegisterStoryRoutes(tenantAPI)
+		routes.RegisterStoryRoutes(tenantGated)
 	}
 
 	// Public endpoint: end-user/subscriber registration (no tenant JWT).
