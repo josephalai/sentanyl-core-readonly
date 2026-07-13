@@ -39,6 +39,10 @@ func main() {
 	db.UsingLocalMongo = true
 	db.InitMongoConnection()
 
+	// Ensure per-tenant compound unique indexes on the story-builder graph so
+	// public IDs cannot collide across tenants (ID-004).
+	routes.EnsureStoryGraphIndexes()
+
 	// Set up the service bridge for cross-service communication.
 	lmsURL := envOrDefault("LMS_SERVICE_URL", "http://localhost:8082")
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")

@@ -178,6 +178,10 @@ func now() *time.Time { t := time.Now(); return &t }
 // hydrateStory re-fetches the full tree: storylines → enactments → scenes
 // so anything added/updated after initial embedding is always current.
 func hydrateStory(story *pkgmodels.Story) {
+	// ID-004: every nested lookup is scoped to the story's own tenant. Public
+	// IDs and ObjectIds are not an authorization boundary — a corrupted,
+	// guessed, or injected reference must never hydrate another tenant's graph.
+	tid := story.SubscriberId
 	// Script-deployed stories persist storyline references in storyline_ids
 	// with no embedded array (see hydrateStoryGraph in story_engine.go).
 	// Merge those references in so the GUI sees the full graph regardless of
@@ -191,7 +195,7 @@ func hydrateStory(story *pkgmodels.Story) {
 		}
 		for _, slID := range story.StorylineIds.Ids {
 			var sl pkgmodels.Storyline
-			if err := db.GetCollection(pkgmodels.StorylineCollection).FindId(slID).One(&sl); err != nil {
+			if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"_id": slID, "subscriber_id": tid}).One(&sl); err != nil {
 				continue
 			}
 			if present[sl.PublicId] {
@@ -203,7 +207,7 @@ func hydrateStory(story *pkgmodels.Story) {
 	}
 	for i, sl := range story.Storylines {
 		var freshSL pkgmodels.Storyline
-		if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId}).One(&freshSL); err != nil {
+		if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"public_id": sl.PublicId, "subscriber_id": tid}).One(&freshSL); err != nil {
 			continue
 		}
 		// Script-deployed storylines reference enactments by act_ids with no
@@ -211,7 +215,7 @@ func hydrateStory(story *pkgmodels.Story) {
 		if len(freshSL.Acts) == 0 && freshSL.ActIds != nil {
 			for _, actID := range freshSL.ActIds.Ids {
 				var en pkgmodels.Enactment
-				if err := db.GetCollection(pkgmodels.EnactmentCollection).FindId(actID).One(&en); err != nil {
+				if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"_id": actID, "subscriber_id": tid}).One(&en); err != nil {
 					continue
 				}
 				freshSL.Acts = append(freshSL.Acts, &en)
@@ -220,22 +224,22 @@ func hydrateStory(story *pkgmodels.Story) {
 		}
 		for j, en := range freshSL.Acts {
 			var freshEn pkgmodels.Enactment
-			if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": en.PublicId}).One(&freshEn); err != nil {
+			if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"public_id": en.PublicId, "subscriber_id": tid}).One(&freshEn); err != nil {
 				continue
 			}
 			// Script-deployed enactments reference scenes by id — resolve them.
-			hydrateEnactment(&freshEn)
+			hydrateEnactment(&freshEn, tid)
 			// Re-fetch send_scene so messages set after scene was linked are visible
 			if freshEn.SendScene != nil && freshEn.SendScene.PublicId != "" {
 				var freshScene pkgmodels.Scene
-				if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": freshEn.SendScene.PublicId}).One(&freshScene); err == nil {
+				if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": freshEn.SendScene.PublicId, "subscriber_id": tid}).One(&freshScene); err == nil {
 					freshEn.SendScene = &freshScene
 				}
 			}
 			// Re-fetch multi-scene send_scenes as well
 			for k, sc := range freshEn.SendScenes {
 				var freshScene pkgmodels.Scene
-				if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": sc.PublicId}).One(&freshScene); err == nil {
+				if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"public_id": sc.PublicId, "subscriber_id": tid}).One(&freshScene); err == nil {
 					freshEn.SendScenes[k] = &freshScene
 				}
 			}

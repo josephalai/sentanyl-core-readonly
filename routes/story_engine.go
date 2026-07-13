@@ -330,6 +330,9 @@ func hydrateStoryGraph(story *pkgmodels.Story) {
 	if story == nil || story.StorylineIds == nil || len(story.StorylineIds.Ids) == 0 {
 		return
 	}
+	// ID-004: scope every reference resolution to the story's own tenant so a
+	// corrupted or injected id reference cannot pull another tenant's graph.
+	tid := story.SubscriberId
 	// Merge (not just fallback): a story can hold both embedded storylines
 	// (GUI-added) and id references (script-deployed) — the engine must see
 	// the union, same as hydrateStory on the tenant routes.
@@ -341,7 +344,7 @@ func hydrateStoryGraph(story *pkgmodels.Story) {
 	}
 	for _, slID := range story.StorylineIds.Ids {
 		var sl pkgmodels.Storyline
-		if err := db.GetCollection(pkgmodels.StorylineCollection).FindId(slID).One(&sl); err != nil {
+		if err := db.GetCollection(pkgmodels.StorylineCollection).Find(bson.M{"_id": slID, "subscriber_id": tid}).One(&sl); err != nil {
 			continue
 		}
 		if present[sl.PublicId] {
@@ -351,10 +354,10 @@ func hydrateStoryGraph(story *pkgmodels.Story) {
 		if len(sl.Acts) == 0 && sl.ActIds != nil {
 			for _, actID := range sl.ActIds.Ids {
 				var en pkgmodels.Enactment
-				if err := db.GetCollection(pkgmodels.EnactmentCollection).FindId(actID).One(&en); err != nil {
+				if err := db.GetCollection(pkgmodels.EnactmentCollection).Find(bson.M{"_id": actID, "subscriber_id": tid}).One(&en); err != nil {
 					continue
 				}
-				hydrateEnactment(&en)
+				hydrateEnactment(&en, tid)
 				sl.Acts = append(sl.Acts, &en)
 			}
 			sort.Slice(sl.Acts, func(i, j int) bool { return sl.Acts[i].NaturalOrder < sl.Acts[j].NaturalOrder })
@@ -366,13 +369,15 @@ func hydrateStoryGraph(story *pkgmodels.Story) {
 	})
 }
 
-func hydrateEnactment(en *pkgmodels.Enactment) {
+// hydrateEnactment resolves an enactment's scene/trigger references. tid is the
+// owning tenant (subscriber_id); every lookup is scoped to it (ID-004).
+func hydrateEnactment(en *pkgmodels.Enactment, tid string) {
 	if en.SendScene == nil && en.SendSceneId != nil && en.SendSceneId.Id.Valid() {
-		en.SendScene = loadScene(en.SendSceneId.Id)
+		en.SendScene = loadScene(en.SendSceneId.Id, tid)
 	}
 	if len(en.SendScenes) == 0 && en.SendScenesIds != nil {
 		for _, scID := range en.SendScenesIds.Ids {
-			if sc := loadScene(scID); sc != nil {
+			if sc := loadScene(scID, tid); sc != nil {
 				en.SendScenes = append(en.SendScenes, sc)
 			}
 		}
@@ -381,12 +386,12 @@ func hydrateEnactment(en *pkgmodels.Enactment) {
 		en.OnEvent = map[string][]*pkgmodels.Trigger{}
 		for _, trID := range en.OnEventIds.Ids {
 			var tr pkgmodels.Trigger
-			if err := db.GetCollection(pkgmodels.TriggerCollection).FindId(trID).One(&tr); err != nil {
+			if err := db.GetCollection(pkgmodels.TriggerCollection).Find(bson.M{"_id": trID, "subscriber_id": tid}).One(&tr); err != nil {
 				continue
 			}
 			if tr.DoAction == nil && tr.DoActionId != nil && tr.DoActionId.Id.Valid() {
 				var act pkgmodels.Action
-				if err := db.GetCollection(pkgmodels.ActionCollection).FindId(tr.DoActionId.Id).One(&act); err == nil {
+				if err := db.GetCollection(pkgmodels.ActionCollection).Find(bson.M{"_id": tr.DoActionId.Id, "subscriber_id": tid}).One(&act); err == nil {
 					tr.DoAction = &act
 				}
 			}
@@ -395,14 +400,14 @@ func hydrateEnactment(en *pkgmodels.Enactment) {
 	}
 }
 
-func loadScene(id bson.ObjectId) *pkgmodels.Scene {
+func loadScene(id bson.ObjectId, tid string) *pkgmodels.Scene {
 	var sc pkgmodels.Scene
-	if err := db.GetCollection(pkgmodels.SceneCollection).FindId(id).One(&sc); err != nil {
+	if err := db.GetCollection(pkgmodels.SceneCollection).Find(bson.M{"_id": id, "subscriber_id": tid}).One(&sc); err != nil {
 		return nil
 	}
 	if sc.Message == nil && sc.MessageId != nil && sc.MessageId.Id.Valid() {
 		var msg pkgmodels.Message
-		if err := db.GetCollection(pkgmodels.MessageCollection).FindId(sc.MessageId.Id).One(&msg); err == nil {
+		if err := db.GetCollection(pkgmodels.MessageCollection).Find(bson.M{"_id": sc.MessageId.Id, "subscriber_id": tid}).One(&msg); err == nil {
 			sc.Message = &msg
 		}
 	}
