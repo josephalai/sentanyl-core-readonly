@@ -29,6 +29,10 @@ func HandleTestSetBilling(c *gin.Context) {
 		PlanTier              string   `json:"plan_tier"`
 		LimitGraceOffsetHours *float64 `json:"limit_grace_offset_hours"`
 		SeedContacts          int      `json:"seed_contacts"`
+		// PlatformSubscriptionID lets the downgrade-refusal step pass the
+		// "no active subscription" guard without a real Stripe subscription
+		// (the 409 usage check fires before any Stripe API call).
+		PlatformSubscriptionID string `json:"platform_subscription_id"`
 		// ReleaseHeld invokes the same plans.ReleaseHeldContacts an upgrade
 		// runs, so the flow can prove held-contact release without Stripe.
 		ReleaseHeld bool `json:"release_held"`
@@ -56,6 +60,9 @@ func HandleTestSetBilling(c *gin.Context) {
 	}
 	if req.PlanTier != "" {
 		set["plan_tier"] = req.PlanTier
+	}
+	if req.PlatformSubscriptionID != "" {
+		set["platform_subscription_id"] = req.PlatformSubscriptionID
 	}
 	if req.LimitGraceOffsetHours != nil {
 		set["limit_grace_started_at"] = time.Now().UTC().Add(time.Duration(*req.LimitGraceOffsetHours * float64(time.Hour)))

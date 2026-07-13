@@ -82,6 +82,18 @@ func HandleTenantRegister(c *gin.Context) {
 
 	tenant := models.NewTenant(req.BusinessName)
 
+	// Trial-recycling guard: a signup whose normalized email (case, gmail
+	// dots, +tags stripped) matches a previous tenant's fingerprint gets no
+	// fresh trial — the account is created, but gated until payment.
+	tenant.SignupEmailNormalized = utils.NormalizeSignupEmail(req.Email)
+	if n, _ := db.GetCollection(models.TenantCollection).Find(bson.M{
+		"signup_email_normalized": tenant.SignupEmailNormalized,
+	}).Count(); n > 0 {
+		expired := time.Now().UTC()
+		tenant.TrialEndsAt = &expired
+		log.Printf("tenant register: trial-recycling fingerprint match for %s — trial not granted", tenant.SignupEmailNormalized)
+	}
+
 	accountUser := models.NewAccountUser(req.Email, tenant.Id)
 	accountUser.Name.FirstName = req.FirstName
 	accountUser.Name.LastName = req.LastName
