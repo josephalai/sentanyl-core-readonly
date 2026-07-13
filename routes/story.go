@@ -165,8 +165,8 @@ func RegisterStoryRoutes(r gin.IRouter) {
 	r.GET("/stats/ab", handleStatsStub)
 	r.GET("/stats/ab/:id", handleStatsStub)
 
-	// Admin
-	r.POST("/admin/reset", handleAdminReset)
+	// Admin — destructive reset is owner-only (ID-001).
+	r.POST("/admin/reset", auth.RequirePermission(auth.PermDataDestroy), handleAdminReset)
 }
 
 // ─── Helpers ──────────────────────────────────────────────

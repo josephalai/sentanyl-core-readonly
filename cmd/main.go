@@ -128,24 +128,27 @@ func main() {
 		// The Settings "Reset All Data" button posts to /reset-all-data;
 		// keep this aligned with the frontend contract at
 		// frontend/src/pages/settings/SettingsPage.tsx:402.
-		tenantAPI.DELETE("/reset-all-data", routes.HandleTenantResetAllData)
+		// Destructive reset is owner-only (ID-001).
+		tenantAPI.DELETE("/reset-all-data", auth.RequirePermission(auth.PermDataDestroy), routes.HandleTenantResetAllData)
 
-		// Platform billing (charging the tenant for Sentanyl itself).
+		// Platform billing (charging the tenant for Sentanyl itself). Reads are
+		// available to any authenticated account so an unpaid tenant can always
+		// see status; mutations require owner-level billing authority (ID-001).
 		tenantAPI.GET("/billing", routes.HandleGetBillingStatus)
 		tenantAPI.GET("/billing/plans", routes.HandleListBillingPlans)
-		tenantAPI.POST("/billing/checkout-session", routes.HandleCreateBillingCheckoutSession)
-		tenantAPI.POST("/billing/change-plan", routes.HandleChangeBillingPlan)
-		tenantAPI.POST("/billing/portal-session", routes.HandleCreateBillingPortalSession)
+		tenantAPI.POST("/billing/checkout-session", auth.RequirePermission(auth.PermBillingManage), routes.HandleCreateBillingCheckoutSession)
+		tenantAPI.POST("/billing/change-plan", auth.RequirePermission(auth.PermBillingManage), routes.HandleChangeBillingPlan)
+		tenantAPI.POST("/billing/portal-session", auth.RequirePermission(auth.PermBillingManage), routes.HandleCreateBillingPortalSession)
 
-		// Machine API key (tenant send API + MCP) — self-serve mint/rotate/revoke.
-		tenantAPI.GET("/settings/api-key", routes.HandleGetTenantAPIKey)
-		tenantAPI.POST("/settings/api-key", routes.HandleMintTenantAPIKey)
-		tenantAPI.DELETE("/settings/api-key", routes.HandleRevokeTenantAPIKey)
-		tenantAPI.PUT("/settings/api-key/scopes", routes.HandleUpdateTenantAPIKeyScopes)
+		// Machine API key (tenant send API + MCP) — owner-only secret management.
+		tenantAPI.GET("/settings/api-key", auth.RequirePermission(auth.PermSecretsManage), routes.HandleGetTenantAPIKey)
+		tenantAPI.POST("/settings/api-key", auth.RequirePermission(auth.PermSecretsManage), routes.HandleMintTenantAPIKey)
+		tenantAPI.DELETE("/settings/api-key", auth.RequirePermission(auth.PermSecretsManage), routes.HandleRevokeTenantAPIKey)
+		tenantAPI.PUT("/settings/api-key/scopes", auth.RequirePermission(auth.PermSecretsManage), routes.HandleUpdateTenantAPIKeyScopes)
 
-		// Stripe Connect OAuth initiate + disconnect.
-		tenantAPI.GET("/stripe/connect", routes.HandleStripeConnectInitiate)
-		tenantAPI.DELETE("/stripe/connect", routes.HandleStripeConnectDisconnect)
+		// Stripe Connect OAuth initiate + disconnect — owner-only secret mgmt.
+		tenantAPI.GET("/stripe/connect", auth.RequirePermission(auth.PermSecretsManage), routes.HandleStripeConnectInitiate)
+		tenantAPI.DELETE("/stripe/connect", auth.RequirePermission(auth.PermSecretsManage), routes.HandleStripeConnectDisconnect)
 	}
 
 	// Everything else on the tenant dashboard is GATED on the platform
@@ -153,12 +156,13 @@ func main() {
 	tenantGated := r.Group("/api/tenant")
 	tenantGated.Use(auth.RequireTenantAuth(), auth.RequirePlatformSubscription())
 	{
-		// Tenant custom domains
-		tenantGated.POST("/domains", routes.HandleAddTenantDomain)
+		// Tenant custom domains. Reads open to any account; mutations require
+		// domain-management authority (owner/admin) (ID-001).
+		tenantGated.POST("/domains", auth.RequirePermission(auth.PermDomainManage), routes.HandleAddTenantDomain)
 		tenantGated.GET("/domains", routes.HandleListTenantDomains)
-		tenantGated.DELETE("/domains/:id", routes.HandleDeleteTenantDomain)
-		tenantGated.POST("/domains/:id/verify", routes.HandleVerifyTenantDomain)
-		tenantGated.POST("/domains/adopt", routes.HandleAdoptTenantDomain)
+		tenantGated.DELETE("/domains/:id", auth.RequirePermission(auth.PermDomainManage), routes.HandleDeleteTenantDomain)
+		tenantGated.POST("/domains/:id/verify", auth.RequirePermission(auth.PermDomainManage), routes.HandleVerifyTenantDomain)
+		tenantGated.POST("/domains/adopt", auth.RequirePermission(auth.PermDomainManage), routes.HandleAdoptTenantDomain)
 
 		// Context packs, brand profile, attribute schema
 		routes.RegisterContextPackRoutes(tenantGated)
