@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -1029,7 +1030,7 @@ func handleDeleteTemplateVariable(c *gin.Context) {
 func handleGetUsers(c *gin.Context) {
 	sid := auth.GetTenantID(c)
 	var items []pkgmodels.User
-	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
+	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
 	if items == nil {
 		items = []pkgmodels.User{}
 	}
@@ -1038,7 +1039,7 @@ func handleGetUsers(c *gin.Context) {
 
 func handleGetUser(c *gin.Context) {
 	var item pkgmodels.User
-	if err := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}).One(&item); err != nil {
+	if err := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c), "timestamps.deleted_at": nil}).One(&item); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
@@ -1058,6 +1059,9 @@ func handleCreateUser(c *gin.Context) {
 		return
 	}
 	item.SubscriberId = auth.GetTenantID(c)
+	// Stamp both tenant keys — campaign audiences, plan limits, and the MCP
+	// contact list all filter on tenant_id.
+	item.TenantID = auth.GetTenantObjectID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
@@ -1096,8 +1100,32 @@ func handleAddUserToStory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status"
 
 // HandleRegisterUser registers a new end-user/subscriber (public endpoint, no tenant JWT needed).
 func HandleRegisterUser(c *gin.Context) {
+	body, _ := c.GetRawData()
 	var item pkgmodels.User
-	c.ShouldBindJSON(&item)
+	_ = json.Unmarshal(body, &item)
+	// The admin Add Contact form (and older API clients) send flat
+	// first_name/last_name rather than the nested name object — accept both.
+	var flat struct {
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+		Phone     string `json:"phone"`
+	}
+	_ = json.Unmarshal(body, &flat)
+	if item.Name.First == "" && flat.FirstName != "" {
+		item.Name.First = flat.FirstName
+	}
+	if item.Name.Last == "" && flat.LastName != "" {
+		item.Name.Last = flat.LastName
+	}
+	if item.Phone == "" && flat.Phone != "" {
+		item.Phone = flat.Phone
+	}
+	// Contacts created via subscriber_id only were invisible to everything
+	// keyed on tenant_id (campaign audiences, plan limits, MCP contact list)
+	// — derive it so both keys are always present.
+	if item.TenantID == "" && bson.IsObjectIdHex(item.SubscriberId) {
+		item.TenantID = bson.ObjectIdHex(item.SubscriberId)
+	}
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
