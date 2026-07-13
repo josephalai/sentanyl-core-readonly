@@ -1122,8 +1122,13 @@ func handleGetEmailLists(c *gin.Context) {
 }
 
 func handleGetEmailList(c *gin.Context) {
+	id := c.Param("id")
+	if !bson.IsObjectIdHex(id) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "list not found"})
+		return
+	}
 	var item pkgmodels.EmailList
-	if err := db.GetCollection(pkgmodels.EmailListCollection).FindId(bson.ObjectIdHex(c.Param("id"))).One(&item); err != nil {
+	if err := db.GetCollection(pkgmodels.EmailListCollection).Find(bson.M{"_id": bson.ObjectIdHex(id), "subscriber_id": auth.GetTenantID(c)}).One(&item); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "list not found"})
 		return
 	}
@@ -1135,6 +1140,7 @@ func handleCreateEmailList(c *gin.Context) {
 	c.ShouldBindJSON(&item)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
+	item.SubscriberId = auth.GetTenantID(c)
 	db.GetCollection(pkgmodels.EmailListCollection).Insert(item)
 	c.JSON(http.StatusOK, gin.H{"list": item})
 }
