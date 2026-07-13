@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/josephalai/sentanyl/pkg/auth"
 )
 
 // ServiceBridge is an HTTP client bridge that the compiler/hydrator will use
@@ -30,7 +32,13 @@ func NewServiceBridge(lmsBaseURL, marketingBaseURL string) *ServiceBridge {
 // HydrateLMS sends data to the LMS service for hydration.
 func (b *ServiceBridge) HydrateLMS(data []byte) error {
 	url := b.LMSBaseURL + "/internal/hydrate-lms"
-	resp, err := b.client.Post(url, "application/json", bytes.NewReader(data))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("lms hydrate request build failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	auth.AttachServiceAuth(req, "core") // API-001 signed service identity
+	resp, err := b.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("lms hydrate request failed: %w", err)
 	}
