@@ -144,6 +144,9 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 			toEmail = string(user.Email)
 		}
 	}
+	if user.UnsubscribedAt != nil {
+		return fmt.Errorf("user %s has unsubscribed — story not started", userPublicId)
+	}
 
 	baseURL := os.Getenv("PUBLIC_BASE_URL")
 	if baseURL == "" {
@@ -152,8 +155,10 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 	send := recordStoryEmailSend(&story, subscriberId, userPublicId, toEmail, content.Subject, 0, 0)
 	body := RewriteLinksForTracking(content.Body, userPublicId, baseURL, send.PublicId)
 	body = injectOpenPixel(body, baseURL, send.PublicId)
+	unsubURL := emailer.UnsubURL(baseURL, userPublicId)
+	body = emailer.AppendUnsubFooter(body, unsubURL)
 
-	if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo); err != nil {
+	if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo, emailer.UnsubHeaders(unsubURL)); err != nil {
 		log.Printf("story engine: email send failed: %v", err)
 		// Don't abort — create session anyway so scheduler can retry.
 	} else {
@@ -265,6 +270,11 @@ func advanceSession(s StorySession) {
 				toEmail = string(advUser.Email)
 			}
 		}
+		if advUser.UnsubscribedAt != nil {
+			log.Printf("story engine: user %s unsubscribed — completing session %s without sending", s.UserPublicId, s.PublicId)
+			markSessionComplete(s)
+			return
+		}
 
 		baseURL := os.Getenv("PUBLIC_BASE_URL")
 		if baseURL == "" {
@@ -273,8 +283,10 @@ func advanceSession(s StorySession) {
 		send := recordStoryEmailSend(&story, s.SubscriberId, s.UserPublicId, toEmail, content.Subject, s.StorylineIdx, nextIdx)
 		body := RewriteLinksForTracking(content.Body, s.UserPublicId, baseURL, send.PublicId)
 		body = injectOpenPixel(body, baseURL, send.PublicId)
+		unsubURL := emailer.UnsubURL(baseURL, s.UserPublicId)
+		body = emailer.AppendUnsubFooter(body, unsubURL)
 
-		if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo); err != nil {
+		if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo, emailer.UnsubHeaders(unsubURL)); err != nil {
 			log.Printf("story engine: advance email failed for session %s: %v", s.PublicId, err)
 		} else {
 			log.Printf("story engine: advanced session %s to enactment %d, sent %q", s.PublicId, nextIdx, content.Subject)
@@ -495,7 +507,7 @@ func injectOpenPixel(html, baseURL, sendPublicId string) string {
 
 // sendStoryEmail sends an email via the EMAIL_PROVIDER-selected provider
 // (warmup router / PowerMTA / Brevo / plain SMTP-MailHog).
-func sendStoryEmail(from, to, subject, htmlBody, replyTo string) error {
+func sendStoryEmail(from, to, subject, htmlBody, replyTo string, extraHeaders map[string]string) error {
 	if from == "" {
 		from = "noreply@sentanyl.local"
 	}
@@ -507,6 +519,9 @@ func sendStoryEmail(from, to, subject, htmlBody, replyTo string) error {
 		buf.WriteString("Reply-To: " + sanitize(replyTo) + "\r\n")
 	}
 	buf.WriteString("Subject: " + sanitize(subject) + "\r\n")
+	for k, v := range extraHeaders {
+		buf.WriteString(sanitize(k) + ": " + sanitize(v) + "\r\n")
+	}
 	buf.WriteString("MIME-Version: 1.0\r\n")
 	buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
 	buf.WriteString("\r\n")
