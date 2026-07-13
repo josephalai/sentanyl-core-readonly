@@ -137,6 +137,7 @@ func main() {
 		tenantAPI.GET("/settings/api-key", routes.HandleGetTenantAPIKey)
 		tenantAPI.POST("/settings/api-key", routes.HandleMintTenantAPIKey)
 		tenantAPI.DELETE("/settings/api-key", routes.HandleRevokeTenantAPIKey)
+		tenantAPI.PUT("/settings/api-key/scopes", routes.HandleUpdateTenantAPIKeyScopes)
 
 		// Stripe Connect OAuth initiate + disconnect.
 		tenantAPI.GET("/stripe/connect", routes.HandleStripeConnectInitiate)

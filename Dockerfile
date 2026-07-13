@@ -8,6 +8,7 @@ COPY marketing-service/ marketing-service/
 COPY video-service/ video-service/
 COPY coaching-service/ coaching-service/
 COPY mcp-service/ mcp-service/
+COPY inbound-smtp-service/ inbound-smtp-service/
 RUN cd core-service && go build -o /app/core-service ./cmd
 
 FROM alpine:3.19

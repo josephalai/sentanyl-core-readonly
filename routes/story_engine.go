@@ -158,7 +158,8 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 	unsubURL := emailer.UnsubURL(baseURL, userPublicId)
 	body = emailer.AppendUnsubFooter(body, unsubURL, emailer.TenantPostalAddress(subscriberId))
 
-	if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo, emailer.UnsubHeaders(unsubURL)); err != nil {
+	replyTo, sendHeaders := storyReplyHeaders(send, content.ReplyTo, unsubURL)
+	if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, replyTo, sendHeaders); err != nil {
 		log.Printf("story engine: email send failed: %v", err)
 		// Don't abort — create session anyway so scheduler can retry.
 	} else {
@@ -286,7 +287,8 @@ func advanceSession(s StorySession) {
 		unsubURL := emailer.UnsubURL(baseURL, s.UserPublicId)
 		body = emailer.AppendUnsubFooter(body, unsubURL, emailer.TenantPostalAddress(s.SubscriberId))
 
-		if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo, emailer.UnsubHeaders(unsubURL)); err != nil {
+		replyTo, sendHeaders := storyReplyHeaders(send, content.ReplyTo, unsubURL)
+		if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, replyTo, sendHeaders); err != nil {
 			log.Printf("story engine: advance email failed for session %s: %v", s.PublicId, err)
 		} else {
 			log.Printf("story engine: advanced session %s to enactment %d, sent %q", s.PublicId, nextIdx, content.Subject)
@@ -486,10 +488,26 @@ func recordStoryEmailSend(story *pkgmodels.Story, subscriberId, userPublicId, to
 	send.StoryName = story.Name
 	send.StorylineIdx = storylineIdx
 	send.EnactmentIdx = enactmentIdx
+	send.MessageID, _ = emailer.ReplyCorrelation(send.PublicId)
 	if err := db.GetCollection(pkgmodels.EmailSendCollection).Insert(send); err != nil {
 		log.Printf("story engine: email send row insert failed: %v", err)
 	}
 	return send
+}
+
+// storyReplyHeaders resolves the Reply-To and extra headers for a story send:
+// unsubscribe headers always; Message-ID + VERP Reply-To when platform reply
+// ingestion is configured. A scene-configured reply_to always wins over VERP.
+func storyReplyHeaders(send *pkgmodels.EmailSend, sceneReplyTo, unsubURL string) (string, map[string]string) {
+	headers := emailer.UnsubHeaders(unsubURL)
+	msgID, verpReplyTo := emailer.ReplyCorrelation(send.PublicId)
+	if msgID != "" {
+		headers["Message-ID"] = msgID
+	}
+	if sceneReplyTo == "" {
+		return verpReplyTo, headers
+	}
+	return sceneReplyTo, headers
 }
 
 // injectOpenPixel appends the unified 1x1 open-tracking pixel, inside </body>

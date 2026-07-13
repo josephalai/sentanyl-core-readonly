@@ -357,6 +357,7 @@ func HandleGetTenantProfile(c *gin.Context) {
 		"has_brevo":                     tenant.BrevoAPIKey != "",
 		"certificates_default_enabled":  certsDefault,
 		"postal_address":                tenant.PostalAddress,
+		"inbox_auto_respond_enabled":    tenant.InboxAutoRespond(),
 	})
 }
 
@@ -388,6 +389,7 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 		BrevoAPIKey                string `json:"brevo_api_key"`
 		CertificatesDefaultEnabled *bool  `json:"certificates_default_enabled,omitempty"`
 		CertificateDefaultTemplate *string `json:"certificate_default_template,omitempty"`
+		InboxAutoRespondEnabled    *bool  `json:"inbox_auto_respond_enabled,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -444,6 +446,9 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 	}
 	if req.CertificateDefaultTemplate != nil {
 		update["certificate_default_template"] = *req.CertificateDefaultTemplate
+	}
+	if req.InboxAutoRespondEnabled != nil {
+		update["inbox_auto_respond_enabled"] = *req.InboxAutoRespondEnabled
 	}
 
 	if len(update) == 0 {

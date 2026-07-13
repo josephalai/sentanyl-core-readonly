@@ -107,7 +107,19 @@ func handleCreateContextPack(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create context pack"})
 		return
 	}
+	markBusinessBrainStale(tenantID)
 	c.JSON(http.StatusCreated, pack)
+}
+
+// markBusinessBrainStale flags the tenant's Business Brain so the inbox
+// closer regenerates it on next retrieval instead of waiting out the
+// periodic staleness probe. Cross-service Mongo write, same DB.
+func markBusinessBrainStale(tenantID bson.ObjectId) {
+	now := time.Now()
+	_, _ = db.GetCollection(pkgmodels.BusinessBrainCollection).UpdateAll(
+		bson.M{"tenant_id": tenantID, "timestamps.deleted_at": nil},
+		bson.M{"$set": bson.M{"stale_at": now}, "$unset": bson.M{"checked_at": ""}},
+	)
 }
 
 func handleDeleteContextPack(c *gin.Context) {
@@ -127,6 +139,7 @@ func handleDeleteContextPack(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "context pack not found"})
 		return
 	}
+	markBusinessBrainStale(tenantID)
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
@@ -190,6 +203,7 @@ func handleUpsertBrandProfile(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save brand profile"})
 			return
 		}
+		markBusinessBrainStale(tenantID)
 		c.JSON(http.StatusOK, profile)
 		return
 	}
@@ -216,6 +230,7 @@ func handleUpsertBrandProfile(c *gin.Context) {
 	existing.LegalBlock = req.LegalBlock
 	existing.CTAStyle = req.CTAStyle
 	existing.DefaultGenPrefs = req.DefaultGenPrefs
+	markBusinessBrainStale(tenantID)
 	c.JSON(http.StatusOK, existing)
 }
 
