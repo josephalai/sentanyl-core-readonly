@@ -156,7 +156,7 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 	body := RewriteLinksForTracking(content.Body, userPublicId, baseURL, send.PublicId)
 	body = injectOpenPixel(body, baseURL, send.PublicId)
 	unsubURL := emailer.UnsubURL(baseURL, userPublicId)
-	body = emailer.AppendUnsubFooter(body, unsubURL)
+	body = emailer.AppendUnsubFooter(body, unsubURL, emailer.TenantPostalAddress(subscriberId))
 
 	if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo, emailer.UnsubHeaders(unsubURL)); err != nil {
 		log.Printf("story engine: email send failed: %v", err)
@@ -284,7 +284,7 @@ func advanceSession(s StorySession) {
 		body := RewriteLinksForTracking(content.Body, s.UserPublicId, baseURL, send.PublicId)
 		body = injectOpenPixel(body, baseURL, send.PublicId)
 		unsubURL := emailer.UnsubURL(baseURL, s.UserPublicId)
-		body = emailer.AppendUnsubFooter(body, unsubURL)
+		body = emailer.AppendUnsubFooter(body, unsubURL, emailer.TenantPostalAddress(s.SubscriberId))
 
 		if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo, emailer.UnsubHeaders(unsubURL)); err != nil {
 			log.Printf("story engine: advance email failed for session %s: %v", s.PublicId, err)

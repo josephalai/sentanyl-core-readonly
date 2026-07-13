@@ -356,6 +356,7 @@ func HandleGetTenantProfile(c *gin.Context) {
 		"has_mailgun":                   tenant.MailgunAPIKey != "",
 		"has_brevo":                     tenant.BrevoAPIKey != "",
 		"certificates_default_enabled":  certsDefault,
+		"postal_address":                tenant.PostalAddress,
 	})
 }
 
@@ -382,6 +383,7 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 		StripePublicKey            string `json:"stripe_public_key"`
 		StripeWebhookSecret        string `json:"stripe_webhook_secret"`
 		MailgunAPIKey              string `json:"mailgun_api_key"`
+		PostalAddress              *string `json:"postal_address,omitempty"`
 		MailgunDomain              string `json:"mailgun_domain"`
 		BrevoAPIKey                string `json:"brevo_api_key"`
 		CertificatesDefaultEnabled *bool  `json:"certificates_default_enabled,omitempty"`
@@ -395,6 +397,9 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 	update := bson.M{}
 	if req.BusinessName != "" {
 		update["business_name"] = req.BusinessName
+	}
+	if req.PostalAddress != nil {
+		update["postal_address"] = strings.TrimSpace(*req.PostalAddress)
 	}
 	if req.StripeSecretKey != "" {
 		enc, err := utils.EncryptSecret(req.StripeSecretKey)
