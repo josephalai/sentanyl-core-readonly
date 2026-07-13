@@ -8,6 +8,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/core-service/scripting"
+	"github.com/josephalai/sentanyl/pkg/auth"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 )
 
@@ -148,13 +149,20 @@ var allFixtures = []fixtureEntry{
 
 // RegisterScriptRoutes wires up all /api/script/* endpoints.
 func RegisterScriptRoutes(r *gin.Engine) {
+	// Read-only surfaces stay public: the language reference and fixtures are
+	// documentation, and validate persists nothing.
 	r.GET("/api/script/fixtures", handleListFixtures)
 	r.GET("/api/script/fixture/:id", handleGetFixture)
-	r.POST("/api/script/compile", handleCompileScript)
 	r.POST("/api/script/validate", handleValidateScript)
-	r.POST("/api/script/deploy", handleDeployScript)
-	r.POST("/api/script/ai", handleScriptAI)
 	r.GET("/api/script/reference", handleScriptReference)
+
+	// Anything that compiles against or writes into a tenant's workspace
+	// requires tenant auth; the tenant comes from the JWT, never the body.
+	authed := r.Group("/api/script")
+	authed.Use(auth.RequireTenantAuth())
+	authed.POST("/compile", handleCompileScript)
+	authed.POST("/deploy", handleDeployScript)
+	authed.POST("/ai", handleScriptAI)
 }
 
 func handleListFixtures(c *gin.Context) {
@@ -183,8 +191,7 @@ func handleGetFixture(c *gin.Context) {
 
 func handleCompileScript(c *gin.Context) {
 	var req struct {
-		Source       string `json:"source" binding:"required"`
-		SubscriberID string `json:"subscriber_id"`
+		Source string `json:"source" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "source is required"})
@@ -192,7 +199,7 @@ func handleCompileScript(c *gin.Context) {
 	}
 
 	creatorID := bson.NewObjectId()
-	result := scripting.CompileScript(req.Source, req.SubscriberID, creatorID)
+	result := scripting.CompileScript(req.Source, auth.GetTenantID(c), creatorID)
 
 	diags := formatDiagnostics(result.Diagnostics)
 	c.JSON(http.StatusOK, gin.H{
@@ -227,7 +234,6 @@ func handleValidateScript(c *gin.Context) {
 func handleDeployScript(c *gin.Context) {
 	var req struct {
 		Source       string `json:"source" binding:"required"`
-		SubscriberID string `json:"subscriber_id"`
 		StoryIndices []int  `json:"story_indices"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -240,8 +246,12 @@ func handleDeployScript(c *gin.Context) {
 		return
 	}
 
+	// The tenant scope comes exclusively from the authenticated JWT — a body
+	// subscriber_id was a cross-tenant write vector (closed 2026-07-13).
+	subscriberID := auth.GetTenantID(c)
+
 	creatorID := bson.NewObjectId()
-	result := scripting.CompileScript(req.Source, req.SubscriberID, creatorID)
+	result := scripting.CompileScript(req.Source, subscriberID, creatorID)
 	if result.Diagnostics.HasErrors() {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"error":       "compilation failed",
@@ -254,8 +264,8 @@ func handleDeployScript(c *gin.Context) {
 	// hydrator does not derive tenant from a header — every entity must
 	// carry tenant_id before we ship it across the bridge.
 	var tenantOID bson.ObjectId
-	if bson.IsObjectIdHex(req.SubscriberID) {
-		tenantOID = bson.ObjectIdHex(req.SubscriberID)
+	if bson.IsObjectIdHex(subscriberID) {
+		tenantOID = bson.ObjectIdHex(subscriberID)
 	}
 
 	stories := result.Stories
