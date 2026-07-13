@@ -181,21 +181,9 @@ func main() {
 	// Public endpoint: end-user/subscriber registration (no tenant JWT).
 	r.POST("/api/register/user", routes.HandleRegisterUser)
 
-	// Sending domain management — moved to tenantAPI above under /sending-domain.
-	// Legacy bare paths kept as aliases so existing DNS records/bookmarks still work.
-	r.POST("/api/domain", routes.HandleAddDomain)
-	r.GET("/api/domains", routes.HandleGetDomains)
-	r.GET("/api/domain/:domainId", routes.HandleGetDomain)
-	r.DELETE("/api/domain/:domainId", routes.HandleDeleteDomain)
-	r.POST("/api/domain/:domainId/verify-dns", routes.HandleVerifyDNS)
-	r.POST("/api/domain/:domainId/test-send", routes.HandleTestSend)
-	r.GET("/api/domain/:domainId/test-send-status", routes.HandleGetTestSendStatus)
-	r.GET("/api/domain/:domainId/stats", routes.HandleGetDomainStats)
-	r.GET("/api/domain/:domainId/reputation", routes.HandleGetDomainReputation)
-	r.GET("/api/domain/:domainId/warming", routes.HandleGetDomainWarming)
-	r.GET("/api/domain/:domainId/bounces", routes.HandleGetDomainBounces)
-	r.POST("/api/domain/:domainId/pause", routes.HandlePauseDomain)
-	r.POST("/api/domain/:domainId/resume", routes.HandleResumeDomain)
+	// Sending domain management lives on tenantAPI under /sending-domain*.
+	// The unauthenticated legacy /api/domain* aliases (subscriber_id query
+	// param, no JWT) were removed in the phase-4 security sweep.
 
 	// Script compiler (SentanylScript DSL).
 	routes.RegisterScriptRoutes(r)
