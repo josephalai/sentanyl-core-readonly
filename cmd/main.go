@@ -76,6 +76,8 @@ func main() {
 	r := gin.Default()
 	r.Use(httputil.CORSMiddleware())
 
+	r.GET("/health", httputil.HealthHandler("core-service"))
+
 	// E2E-mode synchronous hydrate trigger. Lets the puppeteer harness skip
 	// the 30s ticker so the same request that issues a cert can assert on
 	// asset_url after a single retry. 403 in production.
