@@ -43,6 +43,9 @@ func main() {
 	// public IDs cannot collide across tenants (ID-004).
 	routes.EnsureStoryGraphIndexes()
 
+	// Ensure the platform ProviderEvent unique index (BILL-002 idempotency).
+	routes.EnsurePlatformWebhookIndexes()
+
 	// Set up the service bridge for cross-service communication.
 	lmsURL := envOrDefault("LMS_SERVICE_URL", "http://localhost:8082")
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")

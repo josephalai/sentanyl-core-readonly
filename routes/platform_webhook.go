@@ -42,14 +42,34 @@ func HandlePlatformStripeWebhook(c *gin.Context) {
 	}
 
 	var evt struct {
-		Type string `json:"type"`
-		Data struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Livemode bool   `json:"livemode"`
+		Created  int64  `json:"created"`
+		Data     struct {
 			Object json.RawMessage `json:"object"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rawBody, &evt); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 		return
+	}
+
+	// BILL-002: persist the ProviderEvent before processing, keyed by the
+	// Stripe event id. A duplicate delivery of an already-processed event is
+	// acknowledged without reprocessing (idempotent).
+	if evt.ID != "" {
+		already, err := recordProviderEvent(evt.ID, evt.Type, evt.Livemode, evt.Created)
+		if err != nil {
+			// Could not even record the event — ask Stripe to retry (BILL-001).
+			log.Printf("[platform webhook] provider-event persist failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "event not persisted"})
+			return
+		}
+		if already {
+			c.JSON(http.StatusOK, gin.H{"received": true, "duplicate": true})
+			return
+		}
 	}
 
 	switch evt.Type {
@@ -62,12 +82,90 @@ func HandlePlatformStripeWebhook(c *gin.Context) {
 	case "invoice.payment_failed":
 		err = platformInvoicePaymentFailed(evt.Data.Object)
 	default:
-		// Acknowledge unhandled events so Stripe stops retrying.
+		// Unhandled event type — nothing to do, acknowledge as processed.
 	}
+
+	// BILL-001: a processing failure returns a retryable non-2xx so Stripe
+	// redelivers, instead of the old unconditional 200 that dropped the update.
+	// The per-type handlers already return nil for permanent/unresolvable cases
+	// (e.g. unknown tenant), which are acknowledged as processed.
 	if err != nil {
 		log.Printf("[platform webhook] %s: %v", evt.Type, err)
+		markProviderEventFailed(evt.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "processing failed"})
+		return
 	}
+	markProviderEventProcessed(evt.ID)
 	c.JSON(http.StatusOK, gin.H{"received": true})
+}
+
+// recordProviderEvent inserts (or finds) the ProviderEvent for a Stripe event
+// id. It returns already=true when the event has already been processed, so the
+// caller can skip reprocessing. A first delivery, or a retry of a previously
+// failed event, returns already=false and increments the attempt counter.
+func recordProviderEvent(eventID, eventType string, livemode bool, created int64) (already bool, err error) {
+	col := db.GetCollection(models.ProviderEventCollection)
+	now := time.Now().UTC()
+	insertErr := col.Insert(&models.ProviderEvent{
+		Id:              bson.NewObjectId(),
+		Provider:        "stripe_platform",
+		EventID:         eventID,
+		Type:            eventType,
+		Livemode:        livemode,
+		ProviderCreated: created,
+		Status:          models.ProviderEventReceived,
+		Attempts:        1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if insertErr == nil {
+		return false, nil
+	}
+	if !mgo.IsDup(insertErr) {
+		return false, insertErr
+	}
+	// Already seen: processed events are idempotently skipped; a prior failure
+	// is retried (attempt count bumped).
+	var existing models.ProviderEvent
+	if err := col.Find(bson.M{"provider": "stripe_platform", "event_id": eventID}).One(&existing); err != nil {
+		return false, err
+	}
+	if existing.Status == models.ProviderEventProcessed {
+		return true, nil
+	}
+	_ = col.UpdateId(existing.Id, bson.M{"$inc": bson.M{"attempts": 1}, "$set": bson.M{"updated_at": now}})
+	return false, nil
+}
+
+func markProviderEventProcessed(eventID string) {
+	if eventID == "" {
+		return
+	}
+	_ = db.GetCollection(models.ProviderEventCollection).Update(
+		bson.M{"provider": "stripe_platform", "event_id": eventID},
+		bson.M{"$set": bson.M{"status": models.ProviderEventProcessed, "last_error": "", "updated_at": time.Now().UTC()}},
+	)
+}
+
+func markProviderEventFailed(eventID string, cause error) {
+	if eventID == "" {
+		return
+	}
+	_ = db.GetCollection(models.ProviderEventCollection).Update(
+		bson.M{"provider": "stripe_platform", "event_id": eventID},
+		bson.M{"$set": bson.M{"status": models.ProviderEventFailed, "last_error": cause.Error(), "updated_at": time.Now().UTC()}},
+	)
+}
+
+// EnsurePlatformWebhookIndexes creates the unique ProviderEvent index.
+func EnsurePlatformWebhookIndexes() {
+	if err := db.GetCollection(models.ProviderEventCollection).EnsureIndex(mgo.Index{
+		Key:        []string{"provider", "event_id"},
+		Unique:     true,
+		Background: true,
+	}); err != nil {
+		log.Printf("[platform webhook] failed to ensure provider_event index: %v", err)
+	}
 }
 
 // resolvePlatformTenant finds the tenant a platform event belongs to, via
