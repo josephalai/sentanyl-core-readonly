@@ -149,7 +149,9 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 	if baseURL == "" {
 		baseURL = "http://localhost"
 	}
-	body := RewriteLinksForTracking(content.Body, userPublicId, baseURL)
+	send := recordStoryEmailSend(&story, subscriberId, userPublicId, toEmail, content.Subject, 0, 0)
+	body := RewriteLinksForTracking(content.Body, userPublicId, baseURL, send.PublicId)
+	body = injectOpenPixel(body, baseURL, send.PublicId)
 
 	if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo); err != nil {
 		log.Printf("story engine: email send failed: %v", err)
@@ -268,7 +270,9 @@ func advanceSession(s StorySession) {
 		if baseURL == "" {
 			baseURL = "http://localhost"
 		}
-		body := RewriteLinksForTracking(content.Body, s.UserPublicId, baseURL)
+		send := recordStoryEmailSend(&story, s.SubscriberId, s.UserPublicId, toEmail, content.Subject, s.StorylineIdx, nextIdx)
+		body := RewriteLinksForTracking(content.Body, s.UserPublicId, baseURL, send.PublicId)
+		body = injectOpenPixel(body, baseURL, send.PublicId)
 
 		if err := sendStoryEmail(content.FromEmail, toEmail, content.Subject, body, content.ReplyTo); err != nil {
 			log.Printf("story engine: advance email failed for session %s: %v", s.PublicId, err)
@@ -309,15 +313,27 @@ func markSessionComplete(s StorySession) {
 // untouched. Without this, form-triggered stories deployed via /api/script
 // fail with "has no storylines".
 func hydrateStoryGraph(story *pkgmodels.Story) {
-	if story == nil || len(story.Storylines) > 0 ||
-		story.StorylineIds == nil || len(story.StorylineIds.Ids) == 0 {
+	if story == nil || story.StorylineIds == nil || len(story.StorylineIds.Ids) == 0 {
 		return
+	}
+	// Merge (not just fallback): a story can hold both embedded storylines
+	// (GUI-added) and id references (script-deployed) — the engine must see
+	// the union, same as hydrateStory on the tenant routes.
+	present := make(map[string]bool, len(story.Storylines))
+	for _, sl := range story.Storylines {
+		if sl != nil {
+			present[sl.PublicId] = true
+		}
 	}
 	for _, slID := range story.StorylineIds.Ids {
 		var sl pkgmodels.Storyline
 		if err := db.GetCollection(pkgmodels.StorylineCollection).FindId(slID).One(&sl); err != nil {
 			continue
 		}
+		if present[sl.PublicId] {
+			continue
+		}
+		present[sl.PublicId] = true
 		if len(sl.Acts) == 0 && sl.ActIds != nil {
 			for _, actID := range sl.ActIds.Ids {
 				var en pkgmodels.Enactment
@@ -442,6 +458,39 @@ func getOnSentWait(en *pkgmodels.Enactment) (waitSeconds int, nextAction string)
 	}
 	nextAction = tr.DoAction.ActionName
 	return
+}
+
+// recordStoryEmailSend inserts the unified per-email tracking row for a story
+// engine send. Failures are logged, never fatal — tracking must not block a
+// send.
+func recordStoryEmailSend(story *pkgmodels.Story, subscriberId, userPublicId, toEmail, subject string, storylineIdx, enactmentIdx int) *pkgmodels.EmailSend {
+	tenantID := story.TenantID
+	if tenantID == "" && bson.IsObjectIdHex(subscriberId) {
+		tenantID = bson.ObjectIdHex(subscriberId)
+	}
+	send := pkgmodels.NewEmailSend(tenantID, pkgmodels.EmailSendSourceStory, toEmail, subject)
+	send.ContactPublicID = userPublicId
+	send.StoryPublicID = story.PublicId
+	send.StoryName = story.Name
+	send.StorylineIdx = storylineIdx
+	send.EnactmentIdx = enactmentIdx
+	if err := db.GetCollection(pkgmodels.EmailSendCollection).Insert(send); err != nil {
+		log.Printf("story engine: email send row insert failed: %v", err)
+	}
+	return send
+}
+
+// injectOpenPixel appends the unified 1x1 open-tracking pixel, inside </body>
+// when present.
+func injectOpenPixel(html, baseURL, sendPublicId string) string {
+	if sendPublicId == "" {
+		return html
+	}
+	pixel := `<img src="` + strings.TrimRight(baseURL, "/") + `/api/marketing/track/open?e=` + sendPublicId + `" width="1" height="1" style="display:none" alt=""/>`
+	if i := strings.LastIndex(html, "</body>"); i >= 0 {
+		return html[:i] + pixel + html[i:]
+	}
+	return html + pixel
 }
 
 // sendStoryEmail sends an email via the EMAIL_PROVIDER-selected provider
