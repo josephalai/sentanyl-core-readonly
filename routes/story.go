@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/db"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/plans"
+	"github.com/josephalai/sentanyl/pkg/publicchannel"
 	"github.com/josephalai/sentanyl/pkg/utils"
 )
 
@@ -286,9 +286,9 @@ func handleCreateStory(c *gin.Context) {
 }
 
 func handleUpdateStory(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.StoryCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.StoryCollection, storyUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -400,9 +400,9 @@ func handleCreateStoryline(c *gin.Context) {
 }
 
 func handleUpdateStoryline(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.StorylineCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.StorylineCollection, storylineUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -486,9 +486,9 @@ func handleCreateEnactment(c *gin.Context) {
 }
 
 func handleUpdateEnactment(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.EnactmentCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.EnactmentCollection, enactmentUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -608,9 +608,9 @@ func handleCreateScene(c *gin.Context) {
 }
 
 func handleUpdateScene(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.SceneCollection, sceneUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -696,9 +696,9 @@ func handleCreateMessage(c *gin.Context) {
 }
 
 func handleUpdateMessage(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.MessageCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.MessageCollection, messageUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -755,9 +755,9 @@ func handleCreateMessageContent(c *gin.Context) {
 }
 
 func handleUpdateMessageContent(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.MessageContentCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.MessageContentCollection, messageContentUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -799,9 +799,9 @@ func handleCreateTrigger(c *gin.Context) {
 }
 
 func handleUpdateTrigger(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.TriggerCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.TriggerCollection, triggerUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -843,9 +843,9 @@ func handleCreateAction(c *gin.Context) {
 }
 
 func handleUpdateAction(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.ActionCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.ActionCollection, actionUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -887,9 +887,9 @@ func handleCreateBadge(c *gin.Context) {
 }
 
 func handleUpdateBadge(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.BadgeCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.BadgeCollection, badgeUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -971,9 +971,9 @@ func handleCreateTag(c *gin.Context) {
 }
 
 func handleUpdateTag(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.TagCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.TagCollection, tagUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -1014,9 +1014,9 @@ func handleCreateTemplateVariable(c *gin.Context) {
 }
 
 func handleUpdateTemplateVariable(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.TemplateVariablesCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.TemplateVariablesCollection, templateVarFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -1073,9 +1073,9 @@ func handleCreateUser(c *gin.Context) {
 }
 
 func handleUpdateUser(c *gin.Context) {
-	var updates bson.M
-	c.ShouldBindJSON(&updates)
-	db.GetCollection(pkgmodels.UserCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": updates})
+	if !applySanitizedUpdate(c, pkgmodels.UserCollection, contactUpdateFields) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -1098,42 +1098,100 @@ func handleGetUserDetail(c *gin.Context) {
 
 func handleAddUserToStory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 
-// HandleRegisterUser registers a new end-user/subscriber (public endpoint, no tenant JWT needed).
+// registerUserRequest is the narrow, server-validated contact-creation DTO
+// (ID-002). It carries only client-editable contact fields — never tenant_id,
+// subscriber_id, badges, story state, password hashes, or Stripe IDs, which
+// are server-owned. `subscriber_id`/`domain` are accepted for routing only:
+// the tenant is resolved from verified context, and a body subscriber_id that
+// disagrees with that context is rejected rather than trusted.
+type registerUserRequest struct {
+	Email        string `json:"email"`
+	FirstName    string `json:"first_name"`
+	MiddleName   string `json:"middle_name"`
+	LastName     string `json:"last_name"`
+	Phone        string `json:"phone"`
+	ListID       string `json:"list_id"`
+	Subscribed   bool   `json:"subscribed"`
+	SubscriberID string `json:"subscriber_id"`
+	Domain       string `json:"domain"`
+}
+
+// resolveRegistrationTenant resolves the tenant for a public contact-creation
+// request from verified context only (ID-002): a tenant JWT (admin dashboard),
+// an X-API-Key (documented API clients), or a public channel/domain. It never
+// trusts a caller-supplied subscriber_id/tenant_id as authority.
+func resolveRegistrationTenant(c *gin.Context, bodyDomain string) (bson.ObjectId, bool) {
+	if tid, ok := auth.ResolveTenantByJWT(c); ok {
+		return tid, true
+	}
+	if tid, ok := auth.ResolveTenantByAPIKey(c); ok {
+		return tid, true
+	}
+	if pctx, err := publicchannel.ResolvePublicRequestWithDomain(c, bodyDomain); err == nil && pctx.TenantID != "" {
+		return pctx.TenantID, true
+	}
+	return "", false
+}
+
+// HandleRegisterUser registers a new end-user/subscriber. Public surface, but
+// the owning tenant is resolved from verified context — a JWT, an API key, or a
+// verified channel/domain — not from a caller-chosen subscriber_id (ID-002).
 func HandleRegisterUser(c *gin.Context) {
-	body, _ := c.GetRawData()
+	var req registerUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	tenantID, ok := resolveRegistrationTenant(c, req.Domain)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unresolved tenant: provide a tenant token, API key, or verified domain"})
+		return
+	}
+	// A body subscriber_id is honored only as a routing hint; if it disagrees
+	// with the verified tenant it is a cross-tenant injection attempt.
+	if req.SubscriberID != "" && req.SubscriberID != tenantID.Hex() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "subscriber_id does not match authenticated tenant"})
+		return
+	}
+	if req.Email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
+		return
+	}
+
+	// Reject duplicate contacts within the tenant rather than silently
+	// creating a second record (ID-008 groundwork).
+	existing, _ := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{
+		"subscriber_id":         tenantID.Hex(),
+		"email":                 req.Email,
+		"timestamps.deleted_at": nil,
+	}).Count()
+	if existing > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "contact already exists for this tenant"})
+		return
+	}
+
 	var item pkgmodels.User
-	_ = json.Unmarshal(body, &item)
-	// The admin Add Contact form (and older API clients) send flat
-	// first_name/last_name rather than the nested name object — accept both.
-	var flat struct {
-		FirstName string `json:"first_name"`
-		LastName  string `json:"last_name"`
-		Phone     string `json:"phone"`
-	}
-	_ = json.Unmarshal(body, &flat)
-	if item.Name.First == "" && flat.FirstName != "" {
-		item.Name.First = flat.FirstName
-	}
-	if item.Name.Last == "" && flat.LastName != "" {
-		item.Name.Last = flat.LastName
-	}
-	if item.Phone == "" && flat.Phone != "" {
-		item.Phone = flat.Phone
-	}
-	// Contacts created via subscriber_id only were invisible to everything
-	// keyed on tenant_id (campaign audiences, plan limits, MCP contact list)
-	// — derive it so both keys are always present.
-	if item.TenantID == "" && bson.IsObjectIdHex(item.SubscriberId) {
-		item.TenantID = bson.ObjectIdHex(item.SubscriberId)
-	}
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
+	item.TenantID = tenantID
+	item.SubscriberId = tenantID.Hex()
+	item.Email = pkgmodels.EmailAddress(req.Email)
+	item.Name.First = req.FirstName
+	item.Name.Middle = req.MiddleName
+	item.Name.Last = req.LastName
+	item.Phone = req.Phone
+	item.Subscribed = req.Subscribed
+	if bson.IsObjectIdHex(req.ListID) {
+		item.EmailList = bson.ObjectIdHex(req.ListID)
+	}
 	item.SoftDeletes.CreatedAt = now()
 	plans.ApplyHold(&item)
-	db.GetCollection(pkgmodels.UserCollection).Insert(item)
-	if item.TenantID != "" {
-		plans.Invalidate(item.TenantID)
+	if err := db.GetCollection(pkgmodels.UserCollection).Insert(item); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create contact"})
+		return
 	}
+	plans.Invalidate(tenantID)
 	c.JSON(http.StatusOK, gin.H{"user": item})
 }
 
