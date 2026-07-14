@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -74,6 +75,7 @@ func HandleMintTenantAPIKey(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save key"})
 		return
 	}
+	revokeMachineSessions(tenantID)
 	c.JSON(http.StatusOK, gin.H{
 		"api_key": key, // shown once — only the hash is stored
 		"prefix":  auth.APIKeyPrefix(key),
@@ -137,5 +139,17 @@ func HandleRevokeTenantAPIKey(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke key"})
 		return
 	}
+	revokeMachineSessions(tenantID)
 	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
+}
+
+// revokeMachineSessions kills outstanding machine-principal tokens when the
+// API key they were minted under is rotated or revoked (MCP-001 kill-switch).
+// Non-fatal: the key change itself already blocks new mints.
+func revokeMachineSessions(tenantID bson.ObjectId) {
+	if n, err := auth.RevokeMachineSessions(tenantID); err != nil {
+		log.Printf("api-key: revoke machine sessions for tenant %s: %v", tenantID.Hex(), err)
+	} else if n > 0 {
+		log.Printf("api-key: revoked %d machine session(s) for tenant %s", n, tenantID.Hex())
+	}
 }

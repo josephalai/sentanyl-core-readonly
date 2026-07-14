@@ -214,6 +214,7 @@ func main() {
 	routes.RegisterStoryEngineRoutes(r)
 	jobs.EnsureIndexes()
 	auth.EnsureSessionIndexes()
+	auth.EnsurePrincipalIndexes()
 	routes.RegisterStoryJobs()
 	go jobs.RunWorker(context.Background(), jobs.WorkerConfig{Name: "core-" + auth.ServiceName("worker")})
 
