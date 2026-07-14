@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
 
+	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/emailer"
 	"github.com/josephalai/sentanyl/pkg/jobs"
@@ -41,9 +42,11 @@ type StorySession struct {
 	CreatedAt      time.Time     `bson:"created_at" json:"created_at"`
 }
 
-// RegisterStoryEngineRoutes wires internal story-start endpoint.
+// RegisterStoryEngineRoutes wires the internal story-start endpoint behind
+// the signed service-token check (API-001): fail-closed in production,
+// warn-only in dev so local tooling keeps working.
 func RegisterStoryEngineRoutes(r *gin.Engine) {
-	r.POST("/internal/story/start", handleInternalStartStory)
+	r.POST("/internal/story/start", auth.RequireServiceAuth(), handleInternalStartStory)
 }
 
 // HandleTestTickStories is the e2e fast-forward hook (SENTANYL_E2E_MODE=1
@@ -297,6 +300,31 @@ func advanceSession(s StorySession) {
 			return
 		}
 
+		// Claim the advancement with a compare-and-set BEFORE sending: the
+		// durable sweep and the e2e tick hook (or two sweeps around a lease
+		// expiry) can race on the same expired session, and only the actor
+		// that wins this update may send the step email. The predicate pins
+		// the exact state this actor read (idx + sent_at), so the loser
+		// matches zero documents and returns silently.
+		waitSeconds, nextAction := getOnSentWait(en)
+		if err := db.GetCollection(storySessionCollection).Update(
+			bson.M{
+				"public_id":     s.PublicId,
+				"status":        "active",
+				"enactment_idx": s.EnactmentIdx,
+				"sent_at":       s.SentAt,
+			},
+			bson.M{"$set": bson.M{
+				"enactment_idx": nextIdx,
+				"sent_at":       time.Now(),
+				"wait_seconds":  waitSeconds,
+				"next_action":   nextAction,
+			}},
+		); err != nil {
+			log.Printf("story engine: session %s advancement already claimed elsewhere", s.PublicId)
+			return
+		}
+
 		baseURL := os.Getenv("PUBLIC_BASE_URL")
 		if baseURL == "" {
 			baseURL = "http://localhost"
@@ -313,17 +341,6 @@ func advanceSession(s StorySession) {
 		} else {
 			log.Printf("story engine: advanced session %s to enactment %d, sent %q", s.PublicId, nextIdx, content.Subject)
 		}
-
-		waitSeconds, nextAction := getOnSentWait(en)
-		db.GetCollection(storySessionCollection).Update(
-			bson.M{"public_id": s.PublicId},
-			bson.M{"$set": bson.M{
-				"enactment_idx": nextIdx,
-				"sent_at":       time.Now(),
-				"wait_seconds":  waitSeconds,
-				"next_action":   nextAction,
-			}},
-		)
 
 	default:
 		markSessionComplete(s)
