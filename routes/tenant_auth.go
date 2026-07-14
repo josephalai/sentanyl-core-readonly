@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/josephalai/sentanyl/pkg/audit"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
@@ -165,6 +166,7 @@ func HandleTenantLogin(c *gin.Context) {
 
 	// ID-015: lock out an identity after repeated failures (credential-stuffing).
 	if locked, until := auth.LoginLocked("tenant", req.Email); locked {
+		auditLogin(c, "auth.login.lockout", "", "identity locked out")
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts; try again after " + until.UTC().Format(time.RFC3339)})
 		return
 	}
@@ -173,16 +175,19 @@ func HandleTenantLogin(c *gin.Context) {
 	err := db.GetCollection(models.AccountUserCollection).Find(bson.M{"email": req.Email}).One(&accountUser)
 	if err != nil {
 		auth.RecordLoginFailure("tenant", req.Email)
+		auditLogin(c, "auth.login.failure", "", "unknown identity")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.Password, accountUser.PasswordHash) {
 		auth.RecordLoginFailure("tenant", req.Email)
+		auditLoginFor(c, "auth.login.failure", &accountUser, "bad password")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
 	auth.ClearLoginFailures("tenant", req.Email)
+	auditLoginFor(c, "auth.login", &accountUser, "")
 
 	token, err := auth.GenerateTenantToken(&accountUser)
 	if err != nil {
@@ -206,6 +211,33 @@ func HandleTenantLogin(c *gin.Context) {
 			"role":  accountUser.Role,
 		},
 	})
+}
+
+// auditLogin records a semantic auth event with no resolved account (unknown
+// identity / lockout). Never carries the attempted email — identity probing
+// evidence lives in the lockout counters, not the ledger.
+func auditLogin(c *gin.Context, action, actorID, reason string) {
+	e := audit.FromContext(c)
+	e.Action, e.Reason = action, reason
+	e.ActorKind, e.ActorID = "anonymous", actorID
+	e.Outcome = "failure"
+	if action == "auth.login" {
+		e.Outcome = "success"
+	}
+	audit.Record(e)
+}
+
+// auditLoginFor records an auth event attributed to a resolved AccountUser.
+func auditLoginFor(c *gin.Context, action string, u *models.AccountUser, reason string) {
+	e := audit.FromContext(c)
+	e.Action, e.Reason = action, reason
+	e.ActorKind, e.ActorID = "human", u.Id.Hex()
+	e.TenantID = u.TenantID
+	e.Outcome = "failure"
+	if action == "auth.login" {
+		e.Outcome = "success"
+	}
+	audit.Record(e)
 }
 
 // HandleCustomerLogin authenticates a Contact (Customer) for the tenant library.

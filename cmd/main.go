@@ -10,6 +10,7 @@ import (
 	"github.com/josephalai/sentanyl/core-service/hydrator"
 	"github.com/josephalai/sentanyl/core-service/internal/sidecar"
 	"github.com/josephalai/sentanyl/core-service/routes"
+	"github.com/josephalai/sentanyl/pkg/audit"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/config"
 	"github.com/josephalai/sentanyl/pkg/badges"
@@ -97,9 +98,15 @@ func main() {
 	// 503 fail-closed semantics applied above.
 	routes.SetContextRenderStorage(gcsProvider, gcsBucket)
 
+	// OPS-005: platform audit ledger — indexes, durable-write fallback job,
+	// and the retention sweep (core-service owns the single daily sweep).
+	audit.Init("core-service")
+	audit.StartRetentionSweep()
+
 	// Set up Gin router.
 	r := gin.Default()
 	r.Use(httputil.CORSMiddleware())
+	r.Use(audit.Middleware())
 
 	r.GET("/health", httputil.HealthHandler("core-service"))
 
@@ -156,6 +163,7 @@ func main() {
 		tenantAPI.DELETE("/reset-all-data", auth.RequirePermission(auth.PermDataDestroy), routes.HandleTenantResetAllData)
 
 		// Operator job console (OPS-002) — owner-gated dead-letter read + replay.
+		tenantAPI.GET("/ops/audit", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsAuditList)
 		tenantAPI.GET("/ops/jobs/overview", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsJobOverview)
 		tenantAPI.GET("/ops/jobs/dead", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsDeadLetters)
 		tenantAPI.POST("/ops/jobs/:id/replay", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsReplayJob)

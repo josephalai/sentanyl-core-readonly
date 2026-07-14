@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
 
+	"github.com/josephalai/sentanyl/pkg/audit"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/mcptools"
@@ -76,6 +77,10 @@ func HandleMintTenantAPIKey(c *gin.Context) {
 		return
 	}
 	revokeMachineSessions(tenantID)
+	e := audit.FromContext(c)
+	e.Action, e.Outcome = "apikey.mint", "success"
+	e.TargetType, e.TargetID = "api_key", auth.APIKeyPrefix(key)
+	audit.Record(e)
 	c.JSON(http.StatusOK, gin.H{
 		"api_key": key, // shown once — only the hash is stored
 		"prefix":  auth.APIKeyPrefix(key),
@@ -110,6 +115,11 @@ func HandleUpdateTenantAPIKeyScopes(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update scopes"})
 		return
 	}
+	e := audit.FromContext(c)
+	e.Action, e.Outcome = "apikey.scopes.update", "success"
+	e.TargetType = "api_key"
+	e.Meta = bson.M{"allowed_tools": valid}
+	audit.Record(e)
 	c.JSON(http.StatusOK, gin.H{"allowed_tools": valid})
 }
 
@@ -154,6 +164,10 @@ func HandleRevokeTenantAPIKey(c *gin.Context) {
 		return
 	}
 	revokeMachineSessions(tenantID)
+	e := audit.FromContext(c)
+	e.Action, e.Outcome = "apikey.revoke", "success"
+	e.TargetType = "api_key"
+	audit.Record(e)
 	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
 }
 
