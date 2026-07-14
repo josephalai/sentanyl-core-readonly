@@ -9,6 +9,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/pkg/auth"
+	"github.com/josephalai/sentanyl/pkg/badges"
 	"github.com/josephalai/sentanyl/pkg/db"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/plans"
@@ -897,8 +898,42 @@ func handleUpdateBadge(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+// handleDeleteBadge soft-deletes a badge definition (ID-013). Deletion is
+// blocked (409) while the badge is still referenced: assigned to contacts or
+// named by an offer's granted_badges — hard-removing those definitions
+// silently changed access and broke provenance.
 func handleDeleteBadge(c *gin.Context) {
-	db.GetCollection(pkgmodels.BadgeCollection).Remove(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)})
+	sid := auth.GetTenantID(c)
+	var badge pkgmodels.Badge
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{
+		"public_id": c.Param("id"), "subscriber_id": sid, "timestamps.deleted_at": nil,
+	}).One(&badge); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
+		return
+	}
+	holders, _ := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{
+		"badges": badge.Id, "timestamps.deleted_at": nil,
+	}).Count()
+	offers, _ := db.GetCollection(pkgmodels.OfferCollection).Find(bson.M{
+		"granted_badges": badge.Name, "subscriber_id": sid, "timestamps.deleted_at": nil,
+	}).Count()
+	if offers == 0 {
+		offers, _ = db.GetCollection(pkgmodels.OfferCollection).Find(bson.M{
+			"granted_badges": badge.Name, "tenant_id": badge.TenantID, "timestamps.deleted_at": nil,
+		}).Count()
+	}
+	if holders > 0 || offers > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":            "badge is still referenced; remove it from contacts and offers first",
+			"contacts_holding": holders,
+			"offers_granting":  offers,
+		})
+		return
+	}
+	_ = db.GetCollection(pkgmodels.BadgeCollection).Update(
+		bson.M{"_id": badge.Id},
+		bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}},
+	)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -913,11 +948,19 @@ func handleAssignBadgeToUser(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
 		return
 	}
-	if err := db.GetCollection(pkgmodels.UserCollection).Update(
-		bson.M{"public_id": userPub, "subscriber_id": auth.GetTenantID(c)},
-		bson.M{"$addToSet": bson.M{"badges": badge.Id}},
-	); err != nil {
+	var user pkgmodels.User
+	if err := db.GetCollection(pkgmodels.UserCollection).Find(
+		bson.M{"public_id": userPub, "subscriber_id": auth.GetTenantID(c)}).Select(bson.M{"_id": 1, "tenant_id": 1}).One(&user); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	tenantOID := user.TenantID
+	if tenantOID == "" && bson.IsObjectIdHex(auth.GetTenantID(c)) {
+		tenantOID = bson.ObjectIdHex(auth.GetTenantID(c))
+	}
+	// ID-012: durable provenance with the acting account user as the actor.
+	if _, err := badges.Assign(tenantOID, user.Id, badge.Id, "manual", "", auth.GetAccountUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "badge assignment failed"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "badge_id": badge.Id.Hex()})
@@ -932,11 +975,18 @@ func handleRemoveBadgeFromUser(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
 		return
 	}
-	if err := db.GetCollection(pkgmodels.UserCollection).Update(
-		bson.M{"public_id": userPub, "subscriber_id": auth.GetTenantID(c)},
-		bson.M{"$pull": bson.M{"badges": badge.Id}},
-	); err != nil {
+	var user pkgmodels.User
+	if err := db.GetCollection(pkgmodels.UserCollection).Find(
+		bson.M{"public_id": userPub, "subscriber_id": auth.GetTenantID(c)}).Select(bson.M{"_id": 1, "tenant_id": 1}).One(&user); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	tenantOID := user.TenantID
+	if tenantOID == "" && bson.IsObjectIdHex(auth.GetTenantID(c)) {
+		tenantOID = bson.ObjectIdHex(auth.GetTenantID(c))
+	}
+	if err := badges.Remove(tenantOID, user.Id, badge.Id, "manual", "", auth.GetAccountUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "badge removal failed"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -981,8 +1031,16 @@ func handleUpdateTag(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+// handleDeleteTag soft-deletes a tag definition (ID-013): the definition and
+// any historical references stay auditable instead of vanishing.
 func handleDeleteTag(c *gin.Context) {
-	db.GetCollection(pkgmodels.TagCollection).Remove(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)})
+	if err := db.GetCollection(pkgmodels.TagCollection).Update(
+		bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c), "timestamps.deleted_at": nil},
+		bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}},
+	); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 

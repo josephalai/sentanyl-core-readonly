@@ -52,7 +52,7 @@ var (
 		"advance_to_next_storyline", "send_immediate", "badge_transaction_ids",
 		"unsubscribe", "extra_actions",
 	}
-	badgeUpdateFields    = []string{"name", "description"}
+	badgeUpdateFields    = []string{"name", "description", "kind"}
 	tagUpdateFields      = []string{"name", "description"}
 	templateVarFields    = []string{"name", "value", "description", "default_value"}
 	contactUpdateFields  = []string{

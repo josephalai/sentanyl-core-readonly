@@ -12,6 +12,7 @@ import (
 	"github.com/josephalai/sentanyl/core-service/routes"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/config"
+	"github.com/josephalai/sentanyl/pkg/badges"
 	"github.com/josephalai/sentanyl/pkg/db"
 	httputil "github.com/josephalai/sentanyl/pkg/http"
 	"github.com/josephalai/sentanyl/pkg/jobs"
@@ -51,6 +52,9 @@ func main() {
 
 	// Retire any pre-hashing plaintext reset tokens at rest (ID-015).
 	routes.RetirePlaintextResetTokens()
+
+	// ID-012: badge-assignment provenance idempotency invariant.
+	badges.EnsureIndexes()
 
 	// Set up the service bridge for cross-service communication.
 	lmsURL := envOrDefault("LMS_SERVICE_URL", "http://localhost:8082")
