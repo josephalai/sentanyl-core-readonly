@@ -2,6 +2,7 @@ package routes
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/emailer"
+	"github.com/josephalai/sentanyl/pkg/jobs"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/utils"
 )
@@ -191,16 +193,34 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 	return nil
 }
 
-// StartStoryScheduler launches the background goroutine that advances sessions.
-func StartStoryScheduler() {
-	log.Println("story engine: scheduler starting (2s interval)")
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			advanceExpiredSessions()
+// Story sweep job (W3-B / OPS-001): the session-advance pass runs as a durable
+// self-rescheduling job instead of an in-process ticker, so it survives
+// restarts and — via the job lease — never double-advances (and double-sends
+// email) when multiple core-service replicas run (OPS-004).
+const (
+	storySweepJobType  = "story.sweep"
+	storySweepInterval = 5 * time.Second
+)
+
+// RegisterStoryJobs binds the story sweep handler and bootstraps the sweep
+// chain. Call at startup after Mongo is up; the worker must also be running.
+func RegisterStoryJobs() {
+	jobs.Register(storySweepJobType, func(ctx context.Context, job *jobs.Job) error {
+		// Re-arm the chain FIRST so a crash mid-sweep never stalls scheduling.
+		if err := jobs.EnqueueSweep(storySweepJobType, time.Now().Add(storySweepInterval), storySweepInterval); err != nil {
+			return err
 		}
-	}()
+		advanceExpiredSessions()
+		// Sweep rows accrue one per interval; prune the succeeded ones hourly.
+		if job.RunAt.Unix()%3600 < int64(storySweepInterval/time.Second) {
+			jobs.PruneSucceeded(storySweepJobType, 24*time.Hour)
+		}
+		return nil
+	})
+	if err := jobs.EnqueueSweep(storySweepJobType, time.Now(), storySweepInterval); err != nil {
+		log.Printf("story engine: bootstrap sweep enqueue failed: %v", err)
+	}
+	log.Printf("story engine: durable sweep registered (%s interval)", storySweepInterval)
 }
 
 func advanceExpiredSessions() {

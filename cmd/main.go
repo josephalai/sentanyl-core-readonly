@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/config"
 	"github.com/josephalai/sentanyl/pkg/db"
 	httputil "github.com/josephalai/sentanyl/pkg/http"
+	"github.com/josephalai/sentanyl/pkg/jobs"
 	"github.com/josephalai/sentanyl/pkg/storage"
 )
 
@@ -202,9 +204,14 @@ func main() {
 	// Script compiler (SentanylScript DSL).
 	routes.RegisterScriptRoutes(r)
 
-	// Story execution engine — internal endpoint + scheduler goroutine.
+	// Story execution engine — internal endpoint + durable sweep job (W3-B).
+	// The jobs worker claims only types registered in THIS process, so the
+	// shared jobs collection routes story sweeps here and webhook deliveries
+	// to marketing-service.
 	routes.RegisterStoryEngineRoutes(r)
-	routes.StartStoryScheduler()
+	jobs.EnsureIndexes()
+	routes.RegisterStoryJobs()
+	go jobs.RunWorker(context.Background(), jobs.WorkerConfig{Name: "core-" + auth.ServiceName("worker")})
 
 	// Email click tracking.
 	routes.RegisterTrackingRoutes(r)
