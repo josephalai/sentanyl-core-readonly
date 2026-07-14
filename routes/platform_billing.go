@@ -280,3 +280,20 @@ func HandleCreateBillingPortalSession(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
+
+// HandleGetBillingInvoices returns the tenant's projected invoice history
+// (BILL-012), newest first — a durable read model independent of live Stripe.
+func HandleGetBillingInvoices(c *gin.Context) {
+	tenantID := auth.GetTenantObjectID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var invoices []models.InvoiceProjection
+	_ = db.GetCollection(models.InvoiceProjectionCollection).
+		Find(bson.M{"tenant_id": tenantID}).Sort("-created_at").Limit(100).All(&invoices)
+	if invoices == nil {
+		invoices = []models.InvoiceProjection{}
+	}
+	c.JSON(http.StatusOK, gin.H{"invoices": invoices})
+}

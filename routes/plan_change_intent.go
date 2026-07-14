@@ -115,7 +115,7 @@ func reconcileStalePlanIntents(olderThan time.Time) {
 			continue
 		}
 		if err := db.GetCollection(models.TenantCollection).UpdateId(in.TenantID,
-			bson.M{"$set": bson.M{"plan_tier": tier}}); err != nil {
+			bson.M{"$set": bson.M{"plan_tier": tier, "plan_contract": plans.SnapshotContract(tier)}}); err != nil {
 			log.Printf("billing: reconcile intent %s tenant write: %v", in.Id.Hex(), err)
 			continue
 		}

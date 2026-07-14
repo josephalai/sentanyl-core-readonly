@@ -79,6 +79,8 @@ func HandlePlatformStripeWebhook(c *gin.Context) {
 		err = platformSubscriptionUpdated(evt.Data.Object)
 	case "customer.subscription.deleted":
 		err = platformSubscriptionDeleted(evt.Data.Object)
+	case "invoice.paid", "invoice.payment_succeeded":
+		err = platformInvoicePaid(evt.Data.Object)
 	case "invoice.payment_failed":
 		err = platformInvoicePaymentFailed(evt.Data.Object)
 	default:
@@ -165,6 +167,14 @@ func EnsurePlatformWebhookIndexes() {
 		Background: true,
 	}); err != nil {
 		log.Printf("[platform webhook] failed to ensure provider_event index: %v", err)
+	}
+	// BILL-012: one projection row per (tenant, invoice).
+	if err := db.GetCollection(models.InvoiceProjectionCollection).EnsureIndex(mgo.Index{
+		Key:        []string{"tenant_id", "stripe_invoice_id"},
+		Unique:     true,
+		Background: true,
+	}); err != nil {
+		log.Printf("[platform webhook] failed to ensure invoice_projection index: %v", err)
 	}
 }
 
@@ -281,6 +291,13 @@ func platformSubscriptionUpdated(raw json.RawMessage) error {
 		return nil
 	}
 
+	// BILL-011: freeze the tier's terms as an immutable contract whenever the
+	// tier is (re)set, so later price-table edits never change this
+	// subscriber's promises.
+	if newTier, ok := set["plan_tier"].(string); ok {
+		set["plan_contract"] = plans.SnapshotContract(newTier)
+	}
+
 	// On a tier upgrade, release limit-held contacts and restart the limit
 	// clock — covers checkout-driven upgrades that bypass /billing/change-plan.
 	if newTier, ok := set["plan_tier"].(string); ok {
@@ -337,11 +354,71 @@ func platformInvoicePaymentFailed(raw json.RawMessage) error {
 	if !ok {
 		return nil
 	}
+	upsertInvoiceProjection(tenantID, raw, "payment_failed")
 	if err := db.GetCollection(models.TenantCollection).UpdateId(tenantID,
 		bson.M{"$set": bson.M{"subscription_status": "past_due"}}); err != nil {
 		return err
 	}
 	return stampPastDueIfUnset(tenantID)
+}
+
+// platformInvoicePaid projects a successful platform invoice (BILL-012) so the
+// tenant has a durable billing history independent of live Stripe reads.
+func platformInvoicePaid(raw json.RawMessage) error {
+	var inv struct {
+		Customer string `json:"customer"`
+	}
+	if err := json.Unmarshal(raw, &inv); err != nil {
+		return err
+	}
+	tenantID, ok := resolvePlatformTenant("", inv.Customer)
+	if !ok {
+		return nil
+	}
+	upsertInvoiceProjection(tenantID, raw, "paid")
+	return nil
+}
+
+// upsertInvoiceProjection writes/updates one immutable invoice row from a
+// Stripe invoice payload. Idempotent on (tenant, stripe_invoice_id).
+func upsertInvoiceProjection(tenantID bson.ObjectId, raw json.RawMessage, status string) {
+	var inv struct {
+		ID              string `json:"id"`
+		Number          string `json:"number"`
+		AmountDue       int64  `json:"amount_due"`
+		AmountPaid      int64  `json:"amount_paid"`
+		Currency        string `json:"currency"`
+		HostedInvoiceURL string `json:"hosted_invoice_url"`
+		PeriodStart     int64  `json:"period_start"`
+		PeriodEnd       int64  `json:"period_end"`
+	}
+	if err := json.Unmarshal(raw, &inv); err != nil || inv.ID == "" {
+		return
+	}
+	now := time.Now().UTC()
+	set := bson.M{
+		"tenant_id":          tenantID,
+		"stripe_invoice_id":  inv.ID,
+		"number":             inv.Number,
+		"status":             status,
+		"amount_due_minor":   inv.AmountDue,
+		"amount_paid_minor":  inv.AmountPaid,
+		"currency":           inv.Currency,
+		"hosted_invoice_url": inv.HostedInvoiceURL,
+		"updated_at":         now,
+	}
+	if inv.PeriodStart > 0 {
+		ps := time.Unix(inv.PeriodStart, 0).UTC()
+		set["period_start"] = ps
+	}
+	if inv.PeriodEnd > 0 {
+		pe := time.Unix(inv.PeriodEnd, 0).UTC()
+		set["period_end"] = pe
+	}
+	_, _ = db.GetCollection(models.InvoiceProjectionCollection).Upsert(
+		bson.M{"tenant_id": tenantID, "stripe_invoice_id": inv.ID},
+		bson.M{"$set": set, "$setOnInsert": bson.M{"created_at": now}},
+	)
 }
 
 // stampPastDueIfUnset records when the tenant first went past_due so the

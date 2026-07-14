@@ -159,6 +159,7 @@ func main() {
 		// available to any authenticated account so an unpaid tenant can always
 		// see status; mutations require owner-level billing authority (ID-001).
 		tenantAPI.GET("/billing", routes.HandleGetBillingStatus)
+		tenantAPI.GET("/billing/invoices", routes.HandleGetBillingInvoices)
 		tenantAPI.GET("/billing/plans", routes.HandleListBillingPlans)
 		tenantAPI.POST("/billing/checkout-session", auth.RequirePermission(auth.PermBillingManage), routes.HandleCreateBillingCheckoutSession)
 		tenantAPI.POST("/billing/change-plan", auth.RequirePermission(auth.PermBillingManage), routes.HandleChangeBillingPlan)
