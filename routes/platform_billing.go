@@ -209,17 +209,30 @@ func HandleChangeBillingPlan(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to load subscription"})
 		return
 	}
+	// BILL-003: persist the intent BEFORE the Stripe mutation. If Stripe
+	// succeeds but the local write fails, the pending intent guarantees the
+	// webhook or the reconciliation sweep settles the tier — never silent
+	// divergence between what the tenant pays and what they're recorded as.
+	intent := models.NewPlanChangeIntent(tenantID, current.Tier, target.Tier, tenant.PlatformSubscriptionID)
+	if err := db.GetCollection(models.PlanChangeIntentCollection).Insert(intent); err != nil {
+		log.Printf("[platform billing] insert plan intent: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record plan change"})
+		return
+	}
 	if err := billing.UpdateSubscriptionPrice(key, tenant.PlatformSubscriptionID, item.ItemID, priceID); err != nil {
 		log.Printf("[platform billing] update subscription price: %v", err)
+		resolvePlanIntent(intent.Id, models.PlanChangeIntentFailed, "", "stripe update failed: "+err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to change plan"})
 		return
 	}
 	// Set the tier immediately; the subscription.updated webhook confirms it.
 	if err := db.GetCollection(models.TenantCollection).UpdateId(tenantID,
 		bson.M{"$set": bson.M{"plan_tier": target.Tier}}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "plan changed in Stripe but failed to save — refresh"})
+		// Intent stays pending — the webhook/sweep repairs the local tier.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "plan changed in Stripe but failed to save — it will sync shortly"})
 		return
 	}
+	resolvePlanIntent(intent.Id, models.PlanChangeIntentConfirmed, target.Tier, "applied inline")
 	plans.Invalidate(tenantID)
 	released := 0
 	if target.PriceUSD > current.PriceUSD {

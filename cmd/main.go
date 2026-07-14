@@ -219,6 +219,8 @@ func main() {
 	jobs.EnsureIndexes()
 	auth.EnsureSessionIndexes()
 	auth.EnsurePrincipalIndexes()
+	routes.EnsurePlanIntentIndexes()
+	routes.RegisterPlanIntentSweep()
 	routes.RegisterStoryJobs()
 	go jobs.RunWorker(context.Background(), jobs.WorkerConfig{Name: "core-" + auth.ServiceName("worker")})
 

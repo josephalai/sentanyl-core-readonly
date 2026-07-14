@@ -298,7 +298,16 @@ func platformSubscriptionUpdated(raw json.RawMessage) error {
 	if len(unset) > 0 {
 		update["$unset"] = unset
 	}
-	return db.GetCollection(models.TenantCollection).UpdateId(tenantID, update)
+	if err := db.GetCollection(models.TenantCollection).UpdateId(tenantID, update); err != nil {
+		return err
+	}
+	// BILL-003: authoritative subscription state arrived — settle any pending
+	// plan-change intents against the tier Stripe actually reports.
+	if tier, ok := set["plan_tier"].(string); ok {
+		confirmPlanIntents(tenantID, tier)
+		plans.Invalidate(tenantID)
+	}
+	return nil
 }
 
 func platformSubscriptionDeleted(raw json.RawMessage) error {
