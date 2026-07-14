@@ -90,3 +90,34 @@ func reportDuplicatePublicIDs(coll string) {
 		log.Printf("indexes: %s: duplicate public_id %q in tenant %q (%d rows)", coll, d.ID.Public, d.ID.Subscriber, d.Count)
 	}
 }
+
+// EnsureIdentityIndexes creates the identity invariants:
+//   - account_users.email unique (ID-010): concurrent duplicate signups can't
+//     both land; the register saga rolls the tenant back on the dup.
+// Falls back to non-unique + a loud log if legacy duplicates exist, so an
+// operator can dedupe and re-run rather than the service failing to start.
+func EnsureIdentityIndexes() {
+	col := db.GetCollection(pkgmodels.AccountUserCollection)
+	if err := col.EnsureIndex(mgo.Index{
+		Key:        []string{"email"},
+		Unique:     true,
+		Background: true,
+	}); err != nil {
+		log.Printf("identity: account_users.email unique index failed (likely legacy duplicates): %v — creating non-unique fallback; dedupe and re-run", err)
+		_ = col.EnsureIndex(mgo.Index{Key: []string{"email"}, Background: true})
+	}
+
+	// ID-008: contacts are unique per (tenant, email) — the authoritative
+	// reconciliation key. Partial (email present) + unique; falls back to
+	// non-unique when legacy duplicates exist (run cmd/dedupe-contacts first).
+	contacts := db.GetCollection(pkgmodels.UserCollection)
+	if err := contacts.EnsureIndex(mgo.Index{
+		Key:        []string{"tenant_id", "email"},
+		Unique:     true,
+		Sparse:     true,
+		Background: true,
+	}); err != nil {
+		log.Printf("identity: contacts (tenant_id,email) unique index failed (legacy duplicates): %v — non-unique fallback; run cmd/dedupe-contacts and re-run", err)
+		_ = contacts.EnsureIndex(mgo.Index{Key: []string{"tenant_id", "email"}, Background: true})
+	}
+}

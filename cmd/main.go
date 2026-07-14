@@ -52,6 +52,7 @@ func main() {
 
 	// Retire any pre-hashing plaintext reset tokens at rest (ID-015).
 	routes.RetirePlaintextResetTokens()
+	routes.EnsureIdentityIndexes()
 
 	// ID-012: badge-assignment provenance idempotency invariant.
 	badges.EnsureIndexes()

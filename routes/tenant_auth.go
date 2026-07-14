@@ -15,6 +15,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/utils"
 
 	"github.com/gin-gonic/gin"
+	mgo "gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -80,6 +81,10 @@ func HandleTenantRegister(c *gin.Context) {
 		return
 	}
 
+	// ID-010: registration is atomic w.r.t. concurrent duplicate signups. The
+	// unique index on account_users.email (EnsureIdentityIndexes) is the race
+	// backstop the Count() pre-check cannot provide; on a duplicate-key insert
+	// we roll back the tenant so a failed second insert never orphans a Tenant.
 	tenant := models.NewTenant(req.BusinessName)
 
 	// Trial-recycling guard: a signup whose normalized email (case, gmail
@@ -112,6 +117,13 @@ func HandleTenantRegister(c *gin.Context) {
 		return
 	}
 	if err := db.GetCollection(models.AccountUserCollection).Insert(accountUser); err != nil {
+		// Roll back the just-created tenant so a lost race (or any account
+		// insert failure) never leaves an orphaned Tenant (ID-010).
+		_ = db.GetCollection(models.TenantCollection).RemoveId(tenant.Id)
+		if mgo.IsDup(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "an account with this email already exists"})
+			return
+		}
 		log.Println("Error creating account user:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account"})
 		return
@@ -151,17 +163,26 @@ func HandleTenantLogin(c *gin.Context) {
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
+	// ID-015: lock out an identity after repeated failures (credential-stuffing).
+	if locked, until := auth.LoginLocked("tenant", req.Email); locked {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts; try again after " + until.UTC().Format(time.RFC3339)})
+		return
+	}
+
 	var accountUser models.AccountUser
 	err := db.GetCollection(models.AccountUserCollection).Find(bson.M{"email": req.Email}).One(&accountUser)
 	if err != nil {
+		auth.RecordLoginFailure("tenant", req.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.Password, accountUser.PasswordHash) {
+		auth.RecordLoginFailure("tenant", req.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
+	auth.ClearLoginFailures("tenant", req.Email)
 
 	token, err := auth.GenerateTenantToken(&accountUser)
 	if err != nil {
@@ -210,20 +231,30 @@ func HandleCustomerLogin(c *gin.Context) {
 		return
 	}
 
+	// ID-015: per-(tenant,email) lockout after repeated failures.
+	lockScope := "customer:" + tenantID.Hex()
+	if locked, until := auth.LoginLocked(lockScope, req.Email); locked {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts; try again after " + until.UTC().Format(time.RFC3339)})
+		return
+	}
+
 	var contact models.User
 	err = db.GetCollection(models.UserCollection).Find(bson.M{
 		"email":     models.EmailAddress(req.Email),
 		"tenant_id": tenantID,
 	}).One(&contact)
 	if err != nil {
+		auth.RecordLoginFailure(lockScope, req.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.Password, contact.PasswordHash) {
+		auth.RecordLoginFailure(lockScope, req.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 		return
 	}
+	auth.ClearLoginFailures(lockScope, req.Email)
 
 	token, err := auth.GenerateCustomerToken(&contact, tenantID)
 	if err != nil {
