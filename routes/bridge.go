@@ -54,7 +54,13 @@ func (b *ServiceBridge) HydrateLMS(data []byte) error {
 // HydrateFunnel sends data to the marketing/funnel service for hydration.
 func (b *ServiceBridge) HydrateFunnel(data []byte) error {
 	url := b.MarketingBaseURL + "/internal/hydrate-funnel"
-	resp, err := b.client.Post(url, "application/json", bytes.NewReader(data))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("funnel hydrate request build failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	auth.AttachServiceAuth(req, "core") // API-001 signed service identity
+	resp, err := b.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("funnel hydrate request failed: %w", err)
 	}
@@ -74,7 +80,13 @@ func (b *ServiceBridge) HydrateFunnel(data []byte) error {
 // Returns the marketing-service response body so callers can surface counts.
 func (b *ServiceBridge) HydrateGraph(data []byte) ([]byte, error) {
 	url := b.MarketingBaseURL + "/internal/hydrate-graph"
-	resp, err := b.client.Post(url, "application/json", bytes.NewReader(data))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("graph hydrate request build failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	auth.AttachServiceAuth(req, "core") // API-001 signed service identity
+	resp, err := b.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("graph hydrate request failed: %w", err)
 	}

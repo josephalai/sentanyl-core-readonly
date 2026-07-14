@@ -608,7 +608,14 @@ func callStartStory(storyName, subscriberId, userPublicId string) {
 		"subscriber_id":  subscriberId,
 		"user_public_id": userPublicId,
 	})
-	resp, err := http.Post(coreURL+"/internal/story/start", "application/json", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, coreURL+"/internal/story/start", bytes.NewReader(payload))
+	if err != nil {
+		log.Printf("callStartStory: request build error: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	auth.AttachServiceAuth(req, "core") // API-001 signed service identity
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("callStartStory: HTTP error: %v", err)
 		return
