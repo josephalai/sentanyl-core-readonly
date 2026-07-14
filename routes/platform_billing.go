@@ -134,10 +134,14 @@ func HandleCreateBillingCheckoutSession(c *gin.Context) {
 	}
 
 	base := publicAPIBase()
+	// BILL-008: a stable idempotency key per (tenant, customer, tier) collapses
+	// duplicate submits (double-click, retry) into one Stripe Checkout Session
+	// instead of minting a fresh one each call.
+	idemKey := "checkout:" + tenantID.Hex() + ":" + tenant.PlatformStripeCustomerID + ":" + tier
 	url, err := billing.CreateSubscriptionCheckoutSession(
 		key, priceID, tenant.PlatformStripeCustomerID, tenantID.Hex(), tier,
 		base+"/billing?checkout=success", base+"/billing?checkout=cancel",
-		tenant.TrialEndsAt,
+		idemKey, tenant.TrialEndsAt,
 	)
 	if err != nil {
 		log.Printf("[platform billing] create checkout session: %v", err)

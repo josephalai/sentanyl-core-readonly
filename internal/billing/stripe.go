@@ -5,8 +5,12 @@
 package billing
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,45 +18,130 @@ import (
 	"time"
 )
 
-// stripePost sends a form-encoded POST to the Stripe API and decodes the
-// response, surfacing Stripe error messages. Same hand-rolled style as
-// marketing-service/internal/checkout — no SDK.
-func stripePost(secretKey, path string, form url.Values, out interface{}) error {
-	req, err := http.NewRequest("POST", "https://api.stripe.com"+path, strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(secretKey, "")
+// stripeClient is the shared HTTP client for platform Stripe calls (BILL-006):
+// a bounded timeout so a hung Stripe connection can't wedge a request
+// goroutine forever.
+var stripeClient = &http.Client{Timeout: 25 * time.Second}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("stripe API request failed: %w", err)
-	}
-	defer resp.Body.Close()
+const (
+	stripeMaxRetries  = 3
+	stripeMaxBodyRead = 4 << 20 // 4 MiB cap on response bodies
+)
 
-	var envelope struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	dec := json.NewDecoder(resp.Body)
-	raw := json.RawMessage{}
-	if err := dec.Decode(&raw); err != nil {
-		return fmt.Errorf("failed to decode stripe response: %w", err)
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return fmt.Errorf("failed to decode stripe response: %w", err)
-	}
-	if envelope.Error != nil {
-		return fmt.Errorf("stripe error: %s", envelope.Error.Message)
-	}
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
+// StripeError is a structured Stripe API error (BILL-006): callers can branch
+// on Type/Code instead of string-matching a message.
+type StripeError struct {
+	StatusCode int
+	Type       string
+	Code       string
+	Message    string
+	RequestID  string
+}
+
+func (e *StripeError) Error() string {
+	return fmt.Sprintf("stripe error [%d %s/%s]: %s (request %s)", e.StatusCode, e.Type, e.Code, e.Message, e.RequestID)
+}
+
+// newIdempotencyKey mints a random key so a retried mutation can never
+// double-charge or double-create at Stripe.
+func newIdempotencyKey() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return "sntl_" + hex.EncodeToString(b)
+}
+
+// stripeDo performs one Stripe request with retry classification (BILL-006):
+// network errors and 429/5xx are retried with backoff; 4xx are returned as a
+// structured StripeError immediately. A stable idempotency key is reused
+// across retries of the same POST so retries are safe.
+func stripeDo(method, secretKey, path string, form url.Values, idempotencyKey string, out interface{}) error {
+	return stripeDoBase("https://api.stripe.com", method, secretKey, path, form, idempotencyKey, out)
+}
+
+// stripeDoBase is stripeDo with an overridable base URL (test seam).
+func stripeDoBase(base, method, secretKey, path string, form url.Values, idempotencyKey string, out interface{}) error {
+	var lastErr error
+	for attempt := 0; attempt < stripeMaxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*attempt) * 250 * time.Millisecond)
+		}
+		var body io.Reader
+		if form != nil {
+			body = strings.NewReader(form.Encode())
+		}
+		req, err := http.NewRequest(method, base+path, body)
+		if err != nil {
+			return err
+		}
+		req.SetBasicAuth(secretKey, "")
+		if form != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		if idempotencyKey != "" {
+			req.Header.Set("Idempotency-Key", idempotencyKey)
+		}
+		resp, err := stripeClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("stripe API request failed: %w", err)
+			continue // network error — retry
+		}
+		raw, rerr := io.ReadAll(io.LimitReader(resp.Body, stripeMaxBodyRead))
+		reqID := resp.Header.Get("Request-Id")
+		resp.Body.Close()
+		if rerr != nil {
+			lastErr = fmt.Errorf("failed to read stripe response: %w", rerr)
+			continue
+		}
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			lastErr = &StripeError{StatusCode: resp.StatusCode, Message: "stripe transient error", RequestID: reqID}
+			continue // retryable
+		}
+		var envelope struct {
+			Error *struct {
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return fmt.Errorf("failed to decode stripe response: %w", err)
 		}
+		if envelope.Error != nil {
+			return &StripeError{
+				StatusCode: resp.StatusCode, Type: envelope.Error.Type,
+				Code: envelope.Error.Code, Message: envelope.Error.Message, RequestID: reqID,
+			}
+		}
+		if out != nil {
+			if err := json.Unmarshal(raw, out); err != nil {
+				return fmt.Errorf("failed to decode stripe response: %w", err)
+			}
+		}
+		return nil
 	}
-	return nil
+	return lastErr
+}
+
+// stripePost sends a form-encoded POST. A random idempotency key makes a
+// retried create safe. Callers needing a caller-stable key use stripePostIdem.
+func stripePost(secretKey, path string, form url.Values, out interface{}) error {
+	return stripeDo("POST", secretKey, path, form, newIdempotencyKey(), out)
+}
+
+// stripePostIdem sends a POST with a caller-supplied idempotency key — used
+// when the CALLER controls uniqueness (BILL-008 checkout: one session per
+// tenant+plan intent even across duplicate submits).
+func stripePostIdem(secretKey, path string, form url.Values, idempotencyKey string, out interface{}) error {
+	return stripeDo("POST", secretKey, path, form, idempotencyKey, out)
+}
+
+// AsStripeError extracts a *StripeError from err, if present.
+func AsStripeError(err error) (*StripeError, bool) {
+	var se *StripeError
+	if errors.As(err, &se) {
+		return se, true
+	}
+	return nil, false
 }
 
 // CreateCustomer creates a platform Stripe Customer for a tenant.
@@ -83,7 +172,7 @@ const minTrialLead = 48 * time.Hour
 
 // CreateSubscriptionCheckoutSession creates a subscription-mode Checkout
 // Session for the platform plan, preserving the tenant's remaining trial.
-func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDHex, planTier, successURL, cancelURL string, trialEnd *time.Time) (string, error) {
+func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDHex, planTier, successURL, cancelURL, idempotencyKey string, trialEnd *time.Time) (string, error) {
 	form := url.Values{}
 	form.Set("mode", "subscription")
 	form.Set("customer", customerID)
@@ -103,7 +192,10 @@ func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDH
 	var out struct {
 		URL string `json:"url"`
 	}
-	if err := stripePost(secretKey, "/v1/checkout/sessions", form, &out); err != nil {
+	if idempotencyKey == "" {
+		idempotencyKey = newIdempotencyKey()
+	}
+	if err := stripePostIdem(secretKey, "/v1/checkout/sessions", form, idempotencyKey, &out); err != nil {
 		return "", err
 	}
 	if out.URL == "" {
@@ -112,41 +204,10 @@ func CreateSubscriptionCheckoutSession(secretKey, priceID, customerID, tenantIDH
 	return out.URL, nil
 }
 
-// stripeGet sends a GET to the Stripe API, surfacing Stripe error messages.
+// stripeGet sends a GET to the Stripe API (retryable, bounded, structured
+// errors via stripeDo).
 func stripeGet(secretKey, path string, out interface{}) error {
-	req, err := http.NewRequest("GET", "https://api.stripe.com"+path, nil)
-	if err != nil {
-		return err
-	}
-	req.SetBasicAuth(secretKey, "")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("stripe API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var envelope struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	raw := json.RawMessage{}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return fmt.Errorf("failed to decode stripe response: %w", err)
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return fmt.Errorf("failed to decode stripe response: %w", err)
-	}
-	if envelope.Error != nil {
-		return fmt.Errorf("stripe error: %s", envelope.Error.Message)
-	}
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return fmt.Errorf("failed to decode stripe response: %w", err)
-		}
-	}
-	return nil
+	return stripeDo("GET", secretKey, path, nil, "", out)
 }
 
 // SubscriptionItem is the single line item on a platform subscription.
