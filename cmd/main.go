@@ -15,6 +15,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/db"
 	httputil "github.com/josephalai/sentanyl/pkg/http"
 	"github.com/josephalai/sentanyl/pkg/jobs"
+	"github.com/josephalai/sentanyl/pkg/plans"
 	"github.com/josephalai/sentanyl/pkg/storage"
 )
 
@@ -220,6 +221,7 @@ func main() {
 	auth.EnsureSessionIndexes()
 	auth.EnsurePrincipalIndexes()
 	routes.EnsurePlanIntentIndexes()
+	plans.EnsureUsageIndexes()
 	routes.RegisterPlanIntentSweep()
 	routes.RegisterStoryJobs()
 	go jobs.RunWorker(context.Background(), jobs.WorkerConfig{Name: "core-" + auth.ServiceName("worker")})
