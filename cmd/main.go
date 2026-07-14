@@ -130,6 +130,9 @@ func main() {
 	{
 		tenantAPI.GET("/profile", routes.HandleGetTenantProfile)
 		tenantAPI.PUT("/settings", routes.HandleUpdateTenantSettings)
+		// Session revocation (ID-005): current-token logout + all-device logout.
+		tenantAPI.POST("/logout", routes.HandleTenantLogout)
+		tenantAPI.POST("/logout-all", routes.HandleTenantLogoutAll)
 		// The Settings "Reset All Data" button posts to /reset-all-data;
 		// keep this aligned with the frontend contract at
 		// frontend/src/pages/settings/SettingsPage.tsx:402.
@@ -210,6 +213,7 @@ func main() {
 	// to marketing-service.
 	routes.RegisterStoryEngineRoutes(r)
 	jobs.EnsureIndexes()
+	auth.EnsureSessionIndexes()
 	routes.RegisterStoryJobs()
 	go jobs.RunWorker(context.Background(), jobs.WorkerConfig{Name: "core-" + auth.ServiceName("worker")})
 

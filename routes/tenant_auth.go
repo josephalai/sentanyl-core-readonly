@@ -307,6 +307,12 @@ func HandleCustomerSetPassword(c *gin.Context) {
 		return
 	}
 
+	// ID-005: a password change invalidates every previously issued token for
+	// this contact (stolen-token recovery is the whole point of the reset).
+	if n, rerr := auth.RevokeSessionsForPrincipal(models.AuthSessionKindCustomer, contact.Id.Hex()); rerr == nil && n > 0 {
+		log.Printf("customer set-password: revoked %d prior sessions for contact %s", n, contact.Id.Hex())
+	}
+
 	token, err := auth.GenerateCustomerToken(&contact, tenantID)
 	if err != nil {
 		log.Println("Error generating customer token:", err)
@@ -321,6 +327,37 @@ func HandleCustomerSetPassword(c *gin.Context) {
 			"email": string(contact.Email),
 		},
 	})
+}
+
+// HandleTenantLogout revokes the current token's session (ID-005). The token
+// stops verifying on every service immediately, not at its natural expiry.
+func HandleTenantLogout(c *gin.Context) {
+	jti := auth.GetJTI(c)
+	if jti == "" {
+		// Legacy token without a session row — nothing to revoke server-side.
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "revoked": 0})
+		return
+	}
+	if err := auth.RevokeSessionByJTI(jti); err != nil {
+		log.Printf("tenant logout: revoke jti failed: %v", err)
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "revoked": 1})
+}
+
+// HandleTenantLogoutAll revokes every live session of the authenticated
+// account user — all devices, all tokens (ID-005 logout-all).
+func HandleTenantLogoutAll(c *gin.Context) {
+	accountID := auth.GetAccountUserID(c)
+	if accountID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	n, err := auth.RevokeSessionsForPrincipal(models.AuthSessionKindTenant, accountID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke sessions"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "revoked": n})
 }
 
 // HandleGetTenantProfile returns the current tenant's profile information.
