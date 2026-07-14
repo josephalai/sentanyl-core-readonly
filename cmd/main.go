@@ -155,6 +155,11 @@ func main() {
 		// Destructive reset is owner-only (ID-001).
 		tenantAPI.DELETE("/reset-all-data", auth.RequirePermission(auth.PermDataDestroy), routes.HandleTenantResetAllData)
 
+		// Operator job console (OPS-002) — owner-gated dead-letter read + replay.
+		tenantAPI.GET("/ops/jobs/overview", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsJobOverview)
+		tenantAPI.GET("/ops/jobs/dead", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsDeadLetters)
+		tenantAPI.POST("/ops/jobs/:id/replay", auth.RequirePermission(auth.PermDataDestroy), routes.HandleOpsReplayJob)
+
 		// Platform billing (charging the tenant for Sentanyl itself). Reads are
 		// available to any authenticated account so an unpaid tenant can always
 		// see status; mutations require owner-level billing authority (ID-001).
