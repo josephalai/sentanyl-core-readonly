@@ -158,6 +158,7 @@ func main() {
 		tenantAPI.POST("/settings/api-key", auth.RequirePermission(auth.PermSecretsManage), routes.HandleMintTenantAPIKey)
 		tenantAPI.DELETE("/settings/api-key", auth.RequirePermission(auth.PermSecretsManage), routes.HandleRevokeTenantAPIKey)
 		tenantAPI.PUT("/settings/api-key/scopes", auth.RequirePermission(auth.PermSecretsManage), routes.HandleUpdateTenantAPIKeyScopes)
+		tenantAPI.GET("/settings/api-key/tools", auth.RequirePermission(auth.PermSecretsManage), routes.HandleListTenantAPIKeyTools)
 
 		// Stripe Connect OAuth initiate + disconnect — owner-only secret mgmt.
 		tenantAPI.GET("/stripe/connect", auth.RequirePermission(auth.PermSecretsManage), routes.HandleStripeConnectInitiate)

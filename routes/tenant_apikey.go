@@ -113,6 +113,20 @@ func HandleUpdateTenantAPIKeyScopes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"allowed_tools": valid})
 }
 
+// HandleListTenantAPIKeyTools lists the MCP tool registry so the Settings UI
+// can offer a scope picker whose names always match validateAllowedTools.
+func HandleListTenantAPIKeyTools(c *gin.Context) {
+	tools := make([]gin.H, 0, len(mcptools.Tools))
+	for _, t := range mcptools.Tools {
+		tools = append(tools, gin.H{
+			"name":        t.Name,
+			"description": t.Description,
+			"service":     t.Service,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"tools": tools})
+}
+
 // validateAllowedTools checks names against the MCP tool registry.
 func validateAllowedTools(names []string) ([]string, string) {
 	out := make([]string, 0, len(names))
