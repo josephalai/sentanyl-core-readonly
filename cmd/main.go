@@ -49,6 +49,9 @@ func main() {
 	// Ensure the platform ProviderEvent unique index (BILL-002 idempotency).
 	routes.EnsurePlatformWebhookIndexes()
 
+	// Retire any pre-hashing plaintext reset tokens at rest (ID-015).
+	routes.RetirePlaintextResetTokens()
+
 	// Set up the service bridge for cross-service communication.
 	lmsURL := envOrDefault("LMS_SERVICE_URL", "http://localhost:8082")
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")

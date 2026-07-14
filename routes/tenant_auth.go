@@ -276,7 +276,7 @@ func HandleCustomerSetPassword(c *gin.Context) {
 	var contact models.User
 	err = db.GetCollection(models.UserCollection).Find(bson.M{
 		"tenant_id":            tenantID,
-		"password_reset_token": req.Token,
+		"password_reset_token": auth.HashResetToken(req.Token),
 	}).One(&contact)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})

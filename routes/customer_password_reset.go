@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
 
+	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/emailer"
 	"github.com/josephalai/sentanyl/pkg/models"
@@ -55,16 +54,15 @@ func HandleCustomerRequestReset(c *gin.Context) {
 		return
 	}
 
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
+	token, hashed, err := auth.MintResetToken()
+	if err != nil {
 		c.JSON(http.StatusOK, accepted)
 		return
 	}
-	token := hex.EncodeToString(buf)
 	expires := time.Now().Add(48 * time.Hour)
 	if err := db.GetCollection(models.UserCollection).UpdateId(contact.Id, bson.M{
 		"$set": bson.M{
-			"password_reset_token":   token,
+			"password_reset_token":   hashed,
 			"password_reset_expires": expires,
 			"timestamps.updated_at":  time.Now(),
 		},
@@ -76,6 +74,30 @@ func HandleCustomerRequestReset(c *gin.Context) {
 
 	go sendCustomerResetEmail(tenantID, hostname, req.Email, token)
 	c.JSON(http.StatusOK, accepted)
+}
+
+// RetirePlaintextResetTokens unsets any password_reset_token still stored in
+// legacy plaintext form (pre ID-015 hashing). Runs at startup, idempotent.
+// Rollback/recovery: affected customers re-request a reset — tokens expire
+// after 48h regardless, so nothing durable is lost.
+func RetirePlaintextResetTokens() {
+	info, err := db.GetCollection(models.UserCollection).UpdateAll(
+		bson.M{
+			"password_reset_token": bson.M{
+				"$exists": true,
+				"$ne":     "",
+				"$not":    bson.M{"$regex": "^sha256:"},
+			},
+		},
+		bson.M{"$unset": bson.M{"password_reset_token": "", "password_reset_expires": ""}},
+	)
+	if err != nil {
+		log.Printf("[customer-reset] plaintext token retirement: %v", err)
+		return
+	}
+	if info.Updated > 0 {
+		log.Printf("[customer-reset] retired %d legacy plaintext reset tokens", info.Updated)
+	}
 }
 
 // sendCustomerResetEmail delivers the set-password link on the host the
