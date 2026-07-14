@@ -73,7 +73,11 @@ func main() {
 		defer p.Close()
 	}
 	h := hydrator.New(bridge, gcsProvider, gcsBucket)
-	go h.Start()
+	// Durable hydration sweep (OPS-001): registration + bootstrap enqueue —
+	// the jobs worker started below executes the passes. Indexes first so the
+	// bootstrap enqueue lands on the unique (type, idempotency_key) key.
+	jobs.EnsureIndexes()
+	h.Start()
 
 	// Wire the same storage provider into the context-pack render endpoints
 	// so "render a Saved Context to a Digital Download PDF" uses the same
