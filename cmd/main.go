@@ -56,6 +56,9 @@ func main() {
 	// ID-012: badge-assignment provenance idempotency invariant.
 	badges.EnsureIndexes()
 
+	// COM-EM-009: story-enrollment command-key invariant.
+	routes.EnsureStorySessionIndexes()
+
 	// Set up the service bridge for cross-service communication.
 	lmsURL := envOrDefault("LMS_SERVICE_URL", "http://localhost:8082")
 	marketingURL := envOrDefault("MARKETING_SERVICE_URL", "http://localhost:8083")

@@ -2,6 +2,7 @@ package scripting
 
 import (
 	"fmt"
+	"sort"
 	"math/rand"
 	"strings"
 	"time"
@@ -264,7 +265,14 @@ func (c *Compiler) errorf(pos Pos, format string, args ...interface{}) {
 // ---------- Badge / Tag Pre-creation ----------
 
 func (c *Compiler) precreateBadges() {
+	// Sorted iteration: map order would make generated-id allocation (and
+	// therefore recompilation) nondeterministic (COM-EM-010).
+	names := make([]string, 0, len(c.symbols.BadgeNames))
 	for name := range c.symbols.BadgeNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		badge := &pkgmodels.Badge{
 			Id:           bson.NewObjectId(),
 			PublicId:     generatePublicID("badge"),
@@ -278,7 +286,12 @@ func (c *Compiler) precreateBadges() {
 }
 
 func (c *Compiler) precreateTags() {
+	names := make([]string, 0, len(c.symbols.TagNames))
 	for name := range c.symbols.TagNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		tag := &pkgmodels.Tag{
 			Id:           bson.NewObjectId(),
 			PublicId:     generatePublicID("tag"),

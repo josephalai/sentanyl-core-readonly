@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	mgo "gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/emailer"
+	"github.com/josephalai/sentanyl/pkg/sendauth"
 	"github.com/josephalai/sentanyl/pkg/jobs"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 	"github.com/josephalai/sentanyl/pkg/utils"
@@ -38,8 +40,26 @@ type StorySession struct {
 	SentAt         time.Time     `bson:"sent_at" json:"sent_at"`
 	WaitSeconds    int           `bson:"wait_seconds" json:"wait_seconds"`
 	NextAction     string        `bson:"next_action" json:"next_action"` // "next_scene" | "mark_complete"
-	Status         string        `bson:"status" json:"status"`           // "active" | "completed"
-	CreatedAt      time.Time     `bson:"created_at" json:"created_at"`
+	Status         string        `bson:"status" json:"status"`           // "starting" | "active" | "completed" | "superseded"
+	// CommandKey is the enrollment command's idempotency key (COM-EM-009):
+	// the sparse unique index makes session creation transactional
+	// create-or-return, so a replayed start command can never double-enroll
+	// or double-send the first step.
+	CommandKey string    `bson:"command_key,omitempty" json:"command_key,omitempty"`
+	CreatedAt  time.Time `bson:"created_at" json:"created_at"`
+}
+
+// EnsureStorySessionIndexes creates the COM-EM-009 enrollment-command
+// invariant.
+func EnsureStorySessionIndexes() {
+	if err := db.GetCollection(storySessionCollection).EnsureIndex(mgo.Index{
+		Key:        []string{"command_key"},
+		Unique:     true,
+		Sparse:     true,
+		Background: true,
+	}); err != nil {
+		log.Printf("story engine: session command-key index: %v", err)
+	}
 }
 
 // RegisterStoryEngineRoutes wires the internal story-start endpoint behind
@@ -85,29 +105,32 @@ func handleInternalStartStory(c *gin.Context) {
 		StoryName    string `json:"story_name"    binding:"required"`
 		SubscriberId string `json:"subscriber_id" binding:"required"`
 		UserPublicId string `json:"user_public_id" binding:"required"`
+		CommandKey   string `json:"command_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := StartStoryForUser(req.StoryName, req.SubscriberId, req.UserPublicId); err != nil {
+	if err := StartStoryForUserCmd(req.StoryName, req.SubscriberId, req.UserPublicId, req.CommandKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// StartStoryForUser finds the named story, sends the first email, and creates
-// a StorySession so the scheduler can advance through the sequence.
+// StartStoryForUser keeps the legacy signature for callers without a
+// command key (non-idempotent by design — each call is a fresh command).
 func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
-	log.Printf("story engine: StartStoryForUser story=%q user=%s", storyName, userPublicId)
+	return StartStoryForUserCmd(storyName, subscriberId, userPublicId, "")
+}
 
-	// Cancel any existing active session for this user+story so we don't double-send.
-	db.GetCollection(storySessionCollection).UpdateAll(
-		bson.M{"user_public_id": userPublicId, "story_name": storyName, "status": "active"},
-		bson.M{"$set": bson.M{"status": "superseded"}},
-	)
+// StartStoryForUserCmd is the transactional story-enrollment command
+// (COM-EM-009): the StorySession row is claimed FIRST under the unique
+// command key — a replayed command returns without side effects — and only
+// the claim winner supersedes prior sessions and sends the first step.
+func StartStoryForUserCmd(storyName, subscriberId, userPublicId, commandKey string) error {
+	log.Printf("story engine: StartStoryForUser story=%q user=%s", storyName, userPublicId)
 
 	// Find the story. Try the most-recently deployed one first.
 	var stories []pkgmodels.Story
@@ -149,14 +172,63 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 			toEmail = string(user.Email)
 		}
 	}
-	if user.UnsubscribedAt != nil {
-		return fmt.Errorf("user %s has unsubscribed — story not started", userPublicId)
-	}
-
 	baseURL := os.Getenv("PUBLIC_BASE_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost"
 	}
+
+	// One send authority for every path (COM-EM-004): story sends are
+	// marketing-class — suppression, routability, unsubscribe compliance,
+	// quota — identical to campaigns and newsletters.
+	authTenant := bson.ObjectId("")
+	if bson.IsObjectIdHex(subscriberId) {
+		authTenant = bson.ObjectIdHex(subscriberId)
+	}
+	if dec := sendauth.Authorize(sendauth.Request{
+		TenantID: authTenant,
+		Email:    toEmail,
+		Class:    sendauth.Marketing,
+		Purpose:  "story",
+		UnsubURL: emailer.UnsubURL(baseURL, userPublicId),
+	}); !dec.Allowed {
+		return fmt.Errorf("send authority refused story start for %s: %s", userPublicId, dec.Reason)
+	}
+
+	// Transactional enrollment claim (COM-EM-009): insert the session BEFORE
+	// any send. A duplicate command key means this exact command already ran
+	// (or is running) — return without superseding or sending anything.
+	waitSeconds, nextAction := getOnSentWait(en)
+	session := &StorySession{
+		Id:           bson.NewObjectId(),
+		PublicId:     utils.GeneratePublicId(),
+		UserPublicId: userPublicId,
+		SubscriberId: subscriberId,
+		StoryId:      story.Id,
+		StoryName:    storyName,
+		StorylineIdx: 0,
+		EnactmentIdx: 0,
+		SentAt:       time.Now(),
+		WaitSeconds:  waitSeconds,
+		NextAction:   nextAction,
+		Status:       "active",
+		CommandKey:   commandKey,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.GetCollection(storySessionCollection).Insert(session); err != nil {
+		if mgo.IsDup(err) {
+			log.Printf("story engine: start command %q already applied — idempotent return", commandKey)
+			return nil
+		}
+		return fmt.Errorf("failed to create story session: %v", err)
+	}
+
+	// Supersede any OTHER active session for this user+story so the sweep
+	// doesn't double-advance two parallel runs.
+	db.GetCollection(storySessionCollection).UpdateAll(
+		bson.M{"user_public_id": userPublicId, "story_name": storyName, "status": "active", "_id": bson.M{"$ne": session.Id}},
+		bson.M{"$set": bson.M{"status": "superseded"}},
+	)
+
 	send := recordStoryEmailSend(&story, subscriberId, userPublicId, toEmail, content.Subject, 0, 0)
 	body := RewriteLinksForTracking(content.Body, userPublicId, baseURL, send.PublicId)
 	body = injectOpenPixel(body, baseURL, send.PublicId)
@@ -171,27 +243,6 @@ func StartStoryForUser(storyName, subscriberId, userPublicId string) error {
 		log.Printf("story engine: sent email %q to user %s", content.Subject, userPublicId)
 	}
 
-	// Determine wait duration from OnSent trigger.
-	waitSeconds, nextAction := getOnSentWait(en)
-
-	session := &StorySession{
-		Id:           bson.NewObjectId(),
-		PublicId:     utils.GeneratePublicId(),
-		UserPublicId: userPublicId,
-		SubscriberId: subscriberId,
-		StoryId:      story.Id,
-		StoryName:    storyName,
-		StorylineIdx: 0,
-		EnactmentIdx: 0,
-		SentAt:       time.Now(),
-		WaitSeconds:  waitSeconds,
-		NextAction:   nextAction,
-		Status:       "active",
-		CreatedAt:    time.Now(),
-	}
-	if err := db.GetCollection(storySessionCollection).Insert(session); err != nil {
-		return fmt.Errorf("failed to create story session: %v", err)
-	}
 	log.Printf("story engine: session %s created (wait %ds → %s)", session.PublicId, waitSeconds, nextAction)
 	return nil
 }
@@ -328,6 +379,22 @@ func advanceSession(s StorySession) {
 		baseURL := os.Getenv("PUBLIC_BASE_URL")
 		if baseURL == "" {
 			baseURL = "http://localhost"
+		}
+		// Suppression between steps (COM-EM-004): each advance re-consults
+		// the send authority so an unsubscribe mid-sequence stops the story.
+		authTenant := bson.ObjectId("")
+		if bson.IsObjectIdHex(s.SubscriberId) {
+			authTenant = bson.ObjectIdHex(s.SubscriberId)
+		}
+		if dec := sendauth.Authorize(sendauth.Request{
+			TenantID: authTenant,
+			Email:    toEmail,
+			Class:    sendauth.Marketing,
+			Purpose:  "story",
+			UnsubURL: emailer.UnsubURL(baseURL, s.UserPublicId),
+		}); !dec.Allowed {
+			log.Printf("story engine: advance send refused for session %s (reason=%s)", s.PublicId, dec.Reason)
+			return
 		}
 		send := recordStoryEmailSend(&story, s.SubscriberId, s.UserPublicId, toEmail, content.Subject, s.StorylineIdx, nextIdx)
 		body := RewriteLinksForTracking(content.Body, s.UserPublicId, baseURL, send.PublicId)
