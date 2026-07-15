@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,8 +19,11 @@ import (
 	httputil "github.com/josephalai/sentanyl/pkg/http"
 	"github.com/josephalai/sentanyl/pkg/jobs"
 	"github.com/josephalai/sentanyl/pkg/plans"
+	"github.com/josephalai/sentanyl/pkg/publicchannel"
 	"github.com/josephalai/sentanyl/pkg/storage"
 )
+
+var publicLegacySunset = time.Date(2027, 7, 15, 0, 0, 0, 0, time.UTC)
 
 func main() {
 	log.Println("core-service: starting up")
@@ -247,8 +251,10 @@ func main() {
 		routes.RegisterStoryRoutes(tenantGated)
 	}
 
-	// Public endpoint: end-user/subscriber registration (no tenant JWT).
-	r.POST("/api/register/user", routes.HandleRegisterUser)
+	// Public endpoint: end-user/subscriber registration. The legacy alias is
+	// available only for the published compatibility window.
+	r.POST("/api/register/user", httputil.LegacyAliasSunset(publicLegacySunset), routes.HandleRegisterUser)
+	r.POST("/api/v1/public/register", publicchannel.RequireSignedContext(), httputil.Idempotency(), routes.HandleRegisterUser)
 
 	// Sending domain management lives on tenantAPI under /sending-domain*.
 	// The unauthenticated legacy /api/domain* aliases (subscriber_id query
