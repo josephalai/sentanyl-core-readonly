@@ -1089,14 +1089,28 @@ func handleDeleteTemplateVariable(c *gin.Context) {
 
 // ─── Users ────────────────────────────────────────────────
 
+type contactResponse struct {
+	pkgmodels.User
+	ConsentPending bool `json:"consent_pending"`
+}
+
+func toContactResponse(item pkgmodels.User) contactResponse {
+	requestedConsent := item.ConsentSubscribed != nil && *item.ConsentSubscribed
+	return contactResponse{
+		User:           item,
+		ConsentPending: !item.Subscribed && !requestedConsent && item.ConsentOptInDigest != "",
+	}
+}
+
 func handleGetUsers(c *gin.Context) {
 	sid := auth.GetTenantID(c)
 	var items []pkgmodels.User
 	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
-	if items == nil {
-		items = []pkgmodels.User{}
+	out := make([]contactResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, toContactResponse(item))
 	}
-	c.JSON(http.StatusOK, gin.H{"users": items})
+	c.JSON(http.StatusOK, gin.H{"users": out})
 }
 
 func handleGetUser(c *gin.Context) {
@@ -1105,7 +1119,7 @@ func handleGetUser(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"user": item})
+	c.JSON(http.StatusOK, gin.H{"user": toContactResponse(item)})
 }
 
 func handleCreateUser(c *gin.Context) {
@@ -1155,7 +1169,7 @@ func handleDeleteAllUsers(c *gin.Context) {
 func handleGetUserDetail(c *gin.Context) {
 	var item pkgmodels.User
 	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}).One(&item)
-	c.JSON(http.StatusOK, gin.H{"user": item, "campaign": nil, "hot_triggers": []interface{}{}, "pending_emails": []interface{}{}})
+	c.JSON(http.StatusOK, gin.H{"user": toContactResponse(item), "campaign": nil, "hot_triggers": []interface{}{}, "pending_emails": []interface{}{}})
 }
 
 func handleAddUserToStory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
