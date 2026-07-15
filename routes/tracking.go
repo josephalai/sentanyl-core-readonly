@@ -1,9 +1,14 @@
 package routes
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -12,36 +17,91 @@ import (
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/pkg/db"
+	httputil "github.com/josephalai/sentanyl/pkg/http"
 	pkgmodels "github.com/josephalai/sentanyl/pkg/models"
 )
 
 const trackingSeparator = "|"
 
+var trackingLegacySunset = time.Date(2027, 7, 15, 0, 0, 0, 0, time.UTC)
+
+type trackingClaims struct {
+	URL          string `json:"url"`
+	UserPublicID string `json:"user_public_id"`
+	SendPublicID string `json:"send_public_id,omitempty"`
+	ExpiresAt    int64  `json:"exp"`
+}
+
 // encodeTrackingToken encodes a URL + user public-ID (+ optional EmailSend
 // public-ID for per-email stats) for use in a tracking link.
 func encodeTrackingToken(originalURL, userPublicId, sendPublicId string) string {
-	raw := originalURL + trackingSeparator + userPublicId
-	if sendPublicId != "" {
-		raw += trackingSeparator + sendPublicId
-	}
-	return base64.URLEncoding.EncodeToString([]byte(raw))
+	return encodeTrackingTokenAt(originalURL, userPublicId, sendPublicId, time.Now().UTC())
 }
 
-// decodeTrackingToken reverses encodeTrackingToken. Tokens minted before the
-// per-email stats rollout carry no send id — sendPublicId comes back empty.
+func encodeTrackingTokenAt(originalURL, userPublicID, sendPublicID string, now time.Time) string {
+	secret := trackingSecret()
+	if len(secret) < 16 || !safeTrackingURL(originalURL) || userPublicID == "" {
+		return ""
+	}
+	body, err := json.Marshal(trackingClaims{URL: originalURL, UserPublicID: userPublicID, SendPublicID: sendPublicID, ExpiresAt: now.Add(370 * 24 * time.Hour).Unix()})
+	if err != nil {
+		return ""
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(body)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("trk1." + encoded))
+	return "trk1." + encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
 func decodeTrackingToken(token string) (originalURL, userPublicId, sendPublicId string, ok bool) {
+	parts := strings.Split(token, ".")
+	secret := trackingSecret()
+	if len(parts) != 3 || parts[0] != "trk1" || len(secret) < 16 {
+		return "", "", "", false
+	}
+	want := hmac.New(sha256.New, secret)
+	_, _ = want.Write([]byte(parts[0] + "." + parts[1]))
+	got, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(got, want.Sum(nil)) {
+		return "", "", "", false
+	}
+	body, err := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims trackingClaims
+	if err != nil || json.Unmarshal(body, &claims) != nil || claims.ExpiresAt < time.Now().UTC().Unix() || claims.UserPublicID == "" || !safeTrackingURL(claims.URL) {
+		return "", "", "", false
+	}
+	return claims.URL, claims.UserPublicID, claims.SendPublicID, true
+}
+
+// decodeLegacyTrackingToken supports links minted before the signed v1
+// tracking contract. The route carrying these tokens has a fixed sunset.
+func decodeLegacyTrackingToken(token string) (originalURL, userPublicID, sendPublicID string, ok bool) {
 	b, err := base64.URLEncoding.DecodeString(token)
 	if err != nil {
 		return "", "", "", false
 	}
 	parts := strings.SplitN(string(b), trackingSeparator, 3)
-	if len(parts) < 2 {
+	if len(parts) < 2 || parts[1] == "" || !safeTrackingURL(parts[0]) {
 		return "", "", "", false
 	}
 	if len(parts) == 3 {
-		sendPublicId = parts[2]
+		sendPublicID = parts[2]
 	}
-	return parts[0], parts[1], sendPublicId, true
+	return parts[0], parts[1], sendPublicID, true
+}
+
+func trackingSecret() []byte {
+	for _, key := range []string{"TRACKING_TOKEN_SECRET", "INTERNAL_SERVICE_SECRET", "JWT_SECRET"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return []byte(value)
+		}
+	}
+	return nil
+}
+
+func safeTrackingURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 var hrefRegex = regexp.MustCompile(`(?i)(href=["'])([^"']+)(["'])`)
@@ -64,23 +124,33 @@ func RewriteLinksForTracking(html, userPublicId, baseURL, sendPublicId string) s
 			return match
 		}
 		token := encodeTrackingToken(originalURL, userPublicId, sendPublicId)
-		trackingURL := strings.TrimRight(baseURL, "/") + "/api/track/click/" + token
+		if token == "" {
+			return match
+		}
+		trackingURL := strings.TrimRight(baseURL, "/") + "/api/v1/tracking/click/" + token
 		return parts[1] + trackingURL + parts[3]
 	})
 }
 
 // RegisterTrackingRoutes wires click tracking.
 func RegisterTrackingRoutes(r *gin.Engine) {
-	r.GET("/api/track/click/:token", handleClickTracking)
+	r.GET("/api/v1/tracking/click/:token", handleClickTracking)
+	r.GET("/api/track/click/:token", httputil.LegacyAliasSunset(trackingLegacySunset), handleLegacyClickTracking)
 }
 
 func handleClickTracking(c *gin.Context) {
-	token := c.Param("token")
+	handleDecodedClick(c, decodeTrackingToken)
+}
 
-	originalURL, userPublicId, sendPublicId, ok := decodeTrackingToken(token)
+func handleLegacyClickTracking(c *gin.Context) {
+	handleDecodedClick(c, decodeLegacyTrackingToken)
+}
+
+func handleDecodedClick(c *gin.Context, decode func(string) (string, string, string, bool)) {
+	originalURL, userPublicId, sendPublicId, ok := decode(c.Param("token"))
 	if !ok {
-		log.Printf("click tracking: invalid token: %s", token)
-		c.Redirect(http.StatusFound, "/")
+		log.Printf("click tracking: invalid token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired tracking token", "code": "TRACKING_TOKEN_INVALID"})
 		return
 	}
 
