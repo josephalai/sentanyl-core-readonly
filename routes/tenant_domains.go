@@ -10,6 +10,7 @@ import (
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
+	"github.com/josephalai/sentanyl/pkg/publicchannel"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/mgo.v2/bson"
@@ -31,7 +32,11 @@ func HandleAddTenantDomain(c *gin.Context) {
 		return
 	}
 
-	hostname := strings.ToLower(strings.TrimSpace(req.Hostname))
+	hostname, err := publicchannel.CanonicalHost(req.Hostname)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hostname"})
+		return
+	}
 
 	existingCount, _ := db.GetCollection(models.DomainCollection).Find(bson.M{
 		"hostname":              hostname,
@@ -46,7 +51,12 @@ func HandleAddTenantDomain(c *gin.Context) {
 	domain.DNSRecords.CNAME = "proxy.sentanyl.com"
 	domain.DNSRecords.TXT = "sentanyl-verify=" + domain.PublicId
 
+	if err := publicchannel.ClaimHost(hostname, tenantID, publicchannel.HostClaimTenantDomain, domain.Id); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "this domain is already registered", "code": "DOMAIN_ALREADY_CLAIMED"})
+		return
+	}
 	if err := db.GetCollection(models.DomainCollection).Insert(domain); err != nil {
+		_ = publicchannel.ReleaseHost(hostname, tenantID, publicchannel.HostClaimTenantDomain, domain.Id)
 		log.Println("Error creating domain:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add domain"})
 		return
@@ -107,11 +117,13 @@ func HandleDeleteTenantDomain(c *gin.Context) {
 		return
 	}
 
+	var domain models.TenantDomain
+	if err := db.GetCollection(models.DomainCollection).Find(bson.M{"_id": bson.ObjectIdHex(domainID), "tenant_id": tenantID}).One(&domain); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		return
+	}
 	err := db.GetCollection(models.DomainCollection).Update(
-		bson.M{
-			"_id":       bson.ObjectIdHex(domainID),
-			"tenant_id": tenantID,
-		},
+		bson.M{"_id": domain.Id, "tenant_id": tenantID},
 		bson.M{"$currentDate": bson.M{"timestamps.deleted_at": true}},
 	)
 	if err != nil {
@@ -119,6 +131,7 @@ func HandleDeleteTenantDomain(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete domain"})
 		return
 	}
+	_ = publicchannel.ReleaseHost(domain.Hostname, tenantID, publicchannel.HostClaimTenantDomain, domain.Id)
 
 	c.JSON(http.StatusOK, gin.H{"status": "domain deleted"})
 }
@@ -149,12 +162,16 @@ func HandleAdoptTenantDomain(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "hostname is required"})
 		return
 	}
-	hostname := strings.ToLower(strings.TrimSpace(req.Hostname))
+	hostname, err := publicchannel.CanonicalHost(req.Hostname)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hostname"})
+		return
+	}
 
 	col := db.GetCollection(models.DomainCollection)
 
 	var existing models.TenantDomain
-	err := col.Find(bson.M{
+	err = col.Find(bson.M{
 		"hostname":              hostname,
 		"tenant_id":             tenantID,
 		"timestamps.deleted_at": nil,
@@ -187,7 +204,12 @@ func HandleAdoptTenantDomain(c *gin.Context) {
 	domain.DNSRecords.CNAME = "proxy.sentanyl.com"
 	domain.DNSRecords.TXT = "sentanyl-verify=" + domain.PublicId
 	domain.IsVerified = req.Verify
+	if err := publicchannel.AdoptHostForE2E(hostname, tenantID, publicchannel.HostClaimTenantDomain, domain.Id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to claim domain"})
+		return
+	}
 	if err := col.Insert(domain); err != nil {
+		_ = publicchannel.ReleaseHost(hostname, tenantID, publicchannel.HostClaimTenantDomain, domain.Id)
 		log.Println("adopt-domain: insert failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to adopt domain"})
 		return
