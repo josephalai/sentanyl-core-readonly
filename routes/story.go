@@ -1213,7 +1213,7 @@ func handleCreateUser(c *gin.Context) {
 }
 
 func handleUpdateUser(c *gin.Context) {
-	if !applySanitizedUpdate(c, pkgmodels.UserCollection, contactUpdateFields) {
+	if !applySanitizedContactUpdate(c, pkgmodels.UserCollection, contactUpdateFields) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

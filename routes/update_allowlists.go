@@ -52,10 +52,10 @@ var (
 		"advance_to_next_storyline", "send_immediate", "badge_transaction_ids",
 		"unsubscribe", "extra_actions",
 	}
-	badgeUpdateFields    = []string{"name", "description", "kind"}
-	tagUpdateFields      = []string{"name", "description"}
-	templateVarFields    = []string{"name", "value", "description", "default_value"}
-	contactUpdateFields  = []string{
+	badgeUpdateFields   = []string{"name", "description", "kind"}
+	tagUpdateFields     = []string{"name", "description"}
+	templateVarFields   = []string{"name", "value", "description", "default_value"}
+	contactUpdateFields = []string{
 		"name", "email", "phone_number", "personal_tags", "custom_fields",
 		"preferred_locale", "subscribed", "email_list", "middle_name",
 		"first_name", "last_name", "phone",
@@ -66,6 +66,23 @@ var (
 // through the entity allowlist, and performs the tenant-scoped $set. It writes
 // the HTTP response on error and returns false so callers can stop.
 func applySanitizedUpdate(c *gin.Context, collection string, allowed []string) bool {
+	return applySanitizedUpdateWhere(c, collection, allowed, bson.M{
+		"public_id":     c.Param("id"),
+		"subscriber_id": auth.GetTenantID(c),
+	})
+}
+
+// Contacts completed the ID-007 migration to ObjectId tenant_id. Keep the
+// generic updater for legacy subscriber-scoped Story records, but never make
+// contact mutations depend on the retired subscriber_id field.
+func applySanitizedContactUpdate(c *gin.Context, collection string, allowed []string) bool {
+	return applySanitizedUpdateWhere(c, collection, allowed, bson.M{
+		"public_id": c.Param("id"),
+		"tenant_id": auth.GetTenantObjectID(c),
+	})
+}
+
+func applySanitizedUpdateWhere(c *gin.Context, collection string, allowed []string, filter bson.M) bool {
 	var raw bson.M
 	if err := c.ShouldBindJSON(&raw); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -76,10 +93,7 @@ func applySanitizedUpdate(c *gin.Context, collection string, allowed []string) b
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return false
 	}
-	if err := db.GetCollection(collection).Update(
-		bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)},
-		bson.M{"$set": set},
-	); err != nil {
+	if err := db.GetCollection(collection).Update(filter, bson.M{"$set": set}); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return false
 	}
