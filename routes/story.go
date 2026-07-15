@@ -629,8 +629,10 @@ func handleAddTagToScene(c *gin.Context) {
 		TagId string `json:"tag_id"`
 	}
 	c.ShouldBindJSON(&body)
-	var tag pkgmodels.Tag
-	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": body.TagId, "subscriber_id": auth.GetTenantID(c)}).One(&tag); err != nil {
+	var tag pkgmodels.Badge
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{
+		"public_id": body.TagId, "tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$in": []string{pkgmodels.BadgeKindContactLabel, "label"}},
+	}).One(&tag); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})
 		return
 	}
@@ -721,8 +723,10 @@ func handleAddTagToMessage(c *gin.Context) {
 		TagId string `json:"tag_id"`
 	}
 	c.ShouldBindJSON(&body)
-	var tag pkgmodels.Tag
-	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": body.TagId, "subscriber_id": auth.GetTenantID(c)}).One(&tag); err != nil {
+	var tag pkgmodels.Badge
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{
+		"public_id": body.TagId, "tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$in": []string{pkgmodels.BadgeKindContactLabel, "label"}},
+	}).One(&tag); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})
 		return
 	}
@@ -869,9 +873,10 @@ func handleDeleteAction(c *gin.Context) {
 // ─── Badges ───────────────────────────────────────────────
 
 func handleGetBadges(c *gin.Context) {
-	sid := auth.GetTenantID(c)
 	var items []pkgmodels.Badge
-	db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
+	db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{
+		"tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$nin": []string{pkgmodels.BadgeKindContactLabel, "label"}}, "timestamps.deleted_at": nil,
+	}).All(&items)
 	if items == nil {
 		items = []pkgmodels.Badge{}
 	}
@@ -880,7 +885,7 @@ func handleGetBadges(c *gin.Context) {
 
 func handleGetBadge(c *gin.Context) {
 	var item pkgmodels.Badge
-	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}).One(&item); err != nil {
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c), "timestamps.deleted_at": nil}).One(&item); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
 		return
 	}
@@ -889,7 +894,17 @@ func handleGetBadge(c *gin.Context) {
 
 func handleCreateBadge(c *gin.Context) {
 	var item pkgmodels.Badge
-	c.ShouldBindJSON(&item)
+	if c.ShouldBindJSON(&item) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid badge"})
+		return
+	}
+	if item.Kind == "" {
+		item.Kind = pkgmodels.BadgeKindAchievement
+	} else if item.Kind = pkgmodels.NormalizeBadgeKind(item.Kind); item.Kind == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be achievement, contact_label, or system_state"})
+		return
+	}
+	item.TenantID = auth.GetTenantObjectID(c)
 	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
@@ -899,7 +914,28 @@ func handleCreateBadge(c *gin.Context) {
 }
 
 func handleUpdateBadge(c *gin.Context) {
-	if !applySanitizedUpdate(c, pkgmodels.BadgeCollection, badgeUpdateFields) {
+	var raw bson.M
+	if c.ShouldBindJSON(&raw) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	set, err := db.SanitizeUpdate(raw, badgeUpdateFields)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if kind, ok := set["kind"].(string); ok {
+		kind = pkgmodels.NormalizeBadgeKind(kind)
+		if kind == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid badge kind"})
+			return
+		}
+		set["kind"] = kind
+	}
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Update(
+		bson.M{"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c)}, bson.M{"$set": set},
+	); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "badge not found"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -993,21 +1029,26 @@ func handleRemoveBadgeFromUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// ─── Tags ─────────────────────────────────────────────────
+// ─── Contact-label compatibility routes ───────────────────
+// The /tag contract remains for SDK/UI compatibility, but definitions are
+// Badge(kind=contact_label); the legacy tags collection is migration-only.
 
 func handleGetTags(c *gin.Context) {
-	sid := auth.GetTenantID(c)
-	var items []pkgmodels.Tag
-	db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"subscriber_id": sid}).All(&items)
+	var items []pkgmodels.Badge
+	db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{
+		"tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$in": []string{pkgmodels.BadgeKindContactLabel, "label"}}, "timestamps.deleted_at": nil,
+	}).All(&items)
 	if items == nil {
-		items = []pkgmodels.Tag{}
+		items = []pkgmodels.Badge{}
 	}
 	c.JSON(http.StatusOK, gin.H{"tags": items})
 }
 
 func handleGetTag(c *gin.Context) {
-	var item pkgmodels.Tag
-	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}).One(&item); err != nil {
+	var item pkgmodels.Badge
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Find(bson.M{
+		"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$in": []string{pkgmodels.BadgeKindContactLabel, "label"}},
+	}).One(&item); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})
 		return
 	}
@@ -1015,18 +1056,42 @@ func handleGetTag(c *gin.Context) {
 }
 
 func handleCreateTag(c *gin.Context) {
-	var item pkgmodels.Tag
-	c.ShouldBindJSON(&item)
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+	}
+	if c.ShouldBindJSON(&req) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	item := pkgmodels.Badge{Name: req.Name, Description: req.Description, Kind: pkgmodels.BadgeKindContactLabel}
+	item.TenantID = auth.GetTenantObjectID(c)
 	item.SubscriberId = auth.GetTenantID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.SoftDeletes.CreatedAt = now()
-	db.GetCollection(pkgmodels.TagCollection).Insert(item)
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Insert(item); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "contact label already exists"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"tag": item})
 }
 
 func handleUpdateTag(c *gin.Context) {
-	if !applySanitizedUpdate(c, pkgmodels.TagCollection, tagUpdateFields) {
+	var raw bson.M
+	if c.ShouldBindJSON(&raw) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	set, err := db.SanitizeUpdate(raw, tagUpdateFields)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Update(bson.M{
+		"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$in": []string{pkgmodels.BadgeKindContactLabel, "label"}},
+	}, bson.M{"$set": set}); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contact label not found"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -1035,8 +1100,8 @@ func handleUpdateTag(c *gin.Context) {
 // handleDeleteTag soft-deletes a tag definition (ID-013): the definition and
 // any historical references stay auditable instead of vanishing.
 func handleDeleteTag(c *gin.Context) {
-	if err := db.GetCollection(pkgmodels.TagCollection).Update(
-		bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c), "timestamps.deleted_at": nil},
+	if err := db.GetCollection(pkgmodels.BadgeCollection).Update(
+		bson.M{"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c), "kind": bson.M{"$in": []string{pkgmodels.BadgeKindContactLabel, "label"}}, "timestamps.deleted_at": nil},
 		bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}},
 	); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})

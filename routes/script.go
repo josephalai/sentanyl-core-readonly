@@ -390,6 +390,12 @@ func stampTenantOnGraph(result *scripting.CompileResult, stories []*pkgmodels.St
 			b.TenantID = tenantOID
 		}
 	}
+	for _, t := range result.Tags {
+		if t != nil {
+			t.TenantID = tenantOID
+			t.SubscriberId = tenantOID.Hex()
+		}
+	}
 }
 
 // buildHydrateGraphPayload converts the compiler result into the snake_case
