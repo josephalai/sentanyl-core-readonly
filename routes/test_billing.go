@@ -91,11 +91,10 @@ func HandleTestSetBilling(c *gin.Context) {
 		batch := time.Now().UnixNano()
 		for i := 0; i < req.SeedContacts; i++ {
 			u := models.User{
-				Id:           bson.NewObjectId(),
-				PublicId:     utils.GeneratePublicId(),
-				TenantID:     tenantID,
-				SubscriberId: req.TenantID,
-				Email:        models.EmailAddress(fmt.Sprintf("seed-%d-%d@limit.test", batch, i)),
+				Id:       bson.NewObjectId(),
+				PublicId: utils.GeneratePublicId(),
+				TenantID: tenantID,
+				Email:    models.EmailAddress(fmt.Sprintf("seed-%d-%d@limit.test", batch, i)),
 			}
 			u.Subscribed = true
 			u.SoftDeletes.CreatedAt = &now

@@ -625,11 +625,14 @@ func handleDeleteScene(c *gin.Context) {
 }
 
 func handleAddTagToScene(c *gin.Context) {
-	var body struct{ TagId string `json:"tag_id"` }
+	var body struct {
+		TagId string `json:"tag_id"`
+	}
 	c.ShouldBindJSON(&body)
 	var tag pkgmodels.Tag
 	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": body.TagId, "subscriber_id": auth.GetTenantID(c)}).One(&tag); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"}); return
+		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})
+		return
 	}
 	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$push": bson.M{"tags": tag}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -641,7 +644,8 @@ func handleRemoveTagFromScene(c *gin.Context) {
 func handleSetSceneMessage(c *gin.Context) {
 	var msg pkgmodels.Message
 	if err := db.GetCollection(pkgmodels.MessageCollection).Find(bson.M{"public_id": c.Param("messageId"), "subscriber_id": auth.GetTenantID(c)}).One(&msg); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"}); return
+		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
+		return
 	}
 	db.GetCollection(pkgmodels.SceneCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": bson.M{"message": msg}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -713,11 +717,14 @@ func handleDeleteMessage(c *gin.Context) {
 }
 
 func handleAddTagToMessage(c *gin.Context) {
-	var body struct{ TagId string `json:"tag_id"` }
+	var body struct {
+		TagId string `json:"tag_id"`
+	}
 	c.ShouldBindJSON(&body)
 	var tag pkgmodels.Tag
 	if err := db.GetCollection(pkgmodels.TagCollection).Find(bson.M{"public_id": body.TagId, "subscriber_id": auth.GetTenantID(c)}).One(&tag); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"}); return
+		c.JSON(http.StatusNotFound, gin.H{"error": "tag not found"})
+		return
 	}
 	db.GetCollection(pkgmodels.MessageCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$push": bson.M{"vars": tag}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -950,14 +957,11 @@ func handleAssignBadgeToUser(c *gin.Context) {
 	}
 	var user pkgmodels.User
 	if err := db.GetCollection(pkgmodels.UserCollection).Find(
-		bson.M{"public_id": userPub, "subscriber_id": auth.GetTenantID(c)}).Select(bson.M{"_id": 1, "tenant_id": 1}).One(&user); err != nil {
+		bson.M{"public_id": userPub, "tenant_id": auth.GetTenantObjectID(c)}).Select(bson.M{"_id": 1, "tenant_id": 1}).One(&user); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 	tenantOID := user.TenantID
-	if tenantOID == "" && bson.IsObjectIdHex(auth.GetTenantID(c)) {
-		tenantOID = bson.ObjectIdHex(auth.GetTenantID(c))
-	}
 	// ID-012: durable provenance with the acting account user as the actor.
 	if _, err := badges.Assign(tenantOID, user.Id, badge.Id, "manual", "", auth.GetAccountUserID(c)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "badge assignment failed"})
@@ -977,14 +981,11 @@ func handleRemoveBadgeFromUser(c *gin.Context) {
 	}
 	var user pkgmodels.User
 	if err := db.GetCollection(pkgmodels.UserCollection).Find(
-		bson.M{"public_id": userPub, "subscriber_id": auth.GetTenantID(c)}).Select(bson.M{"_id": 1, "tenant_id": 1}).One(&user); err != nil {
+		bson.M{"public_id": userPub, "tenant_id": auth.GetTenantObjectID(c)}).Select(bson.M{"_id": 1, "tenant_id": 1}).One(&user); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 	tenantOID := user.TenantID
-	if tenantOID == "" && bson.IsObjectIdHex(auth.GetTenantID(c)) {
-		tenantOID = bson.ObjectIdHex(auth.GetTenantID(c))
-	}
 	if err := badges.Remove(tenantOID, user.Id, badge.Id, "manual", "", auth.GetAccountUserID(c)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "badge removal failed"})
 		return
@@ -1103,9 +1104,9 @@ func toContactResponse(item pkgmodels.User) contactResponse {
 }
 
 func handleGetUsers(c *gin.Context) {
-	sid := auth.GetTenantID(c)
+	tenantID := auth.GetTenantObjectID(c)
 	var items []pkgmodels.User
-	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"subscriber_id": sid, "timestamps.deleted_at": nil}).All(&items)
+	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"tenant_id": tenantID, "timestamps.deleted_at": nil}).All(&items)
 	out := make([]contactResponse, 0, len(items))
 	for _, item := range items {
 		out = append(out, toContactResponse(item))
@@ -1115,7 +1116,7 @@ func handleGetUsers(c *gin.Context) {
 
 func handleGetUser(c *gin.Context) {
 	var item pkgmodels.User
-	if err := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c), "timestamps.deleted_at": nil}).One(&item); err != nil {
+	if err := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c), "timestamps.deleted_at": nil}).One(&item); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
@@ -1134,9 +1135,7 @@ func handleCreateUser(c *gin.Context) {
 		})
 		return
 	}
-	item.SubscriberId = auth.GetTenantID(c)
-	// Stamp both tenant keys — campaign audiences, plan limits, and the MCP
-	// contact list all filter on tenant_id.
+	// tenant_id is the single contact ownership key (ID-007).
 	item.TenantID = auth.GetTenantObjectID(c)
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
@@ -1156,19 +1155,19 @@ func handleUpdateUser(c *gin.Context) {
 }
 
 func handleDeleteUser(c *gin.Context) {
-	db.GetCollection(pkgmodels.UserCollection).Update(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
+	db.GetCollection(pkgmodels.UserCollection).Update(bson.M{"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c)}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func handleDeleteAllUsers(c *gin.Context) {
-	sid := auth.GetTenantID(c)
-	db.GetCollection(pkgmodels.UserCollection).UpdateAll(bson.M{"subscriber_id": sid}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
+	tenantID := auth.GetTenantObjectID(c)
+	db.GetCollection(pkgmodels.UserCollection).UpdateAll(bson.M{"tenant_id": tenantID}, bson.M{"$set": bson.M{"timestamps.deleted_at": time.Now()}})
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func handleGetUserDetail(c *gin.Context) {
 	var item pkgmodels.User
-	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "subscriber_id": auth.GetTenantID(c)}).One(&item)
+	db.GetCollection(pkgmodels.UserCollection).Find(bson.M{"public_id": c.Param("id"), "tenant_id": auth.GetTenantObjectID(c)}).One(&item)
 	c.JSON(http.StatusOK, gin.H{"user": toContactResponse(item), "campaign": nil, "hot_triggers": []interface{}{}, "pending_emails": []interface{}{}})
 }
 
@@ -1238,7 +1237,7 @@ func HandleRegisterUser(c *gin.Context) {
 	// Reject duplicate contacts within the tenant rather than silently
 	// creating a second record (ID-008 groundwork).
 	existing, _ := db.GetCollection(pkgmodels.UserCollection).Find(bson.M{
-		"subscriber_id":         tenantID.Hex(),
+		"tenant_id":             tenantID,
 		"email":                 req.Email,
 		"timestamps.deleted_at": nil,
 	}).Count()
@@ -1251,7 +1250,6 @@ func HandleRegisterUser(c *gin.Context) {
 	item.Id = bson.NewObjectId()
 	item.PublicId = utils.GeneratePublicId()
 	item.TenantID = tenantID
-	item.SubscriberId = tenantID.Hex()
 	item.Email = pkgmodels.EmailAddress(req.Email)
 	item.Name.First = req.FirstName
 	item.Name.Middle = req.MiddleName
