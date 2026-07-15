@@ -523,8 +523,8 @@ story "Followup" {
 	if block.BlockType != "video" {
 		t.Errorf("expected block type 'video', got %q", block.BlockType)
 	}
-	if block.MediaPublicId != "Demo Video" {
-		t.Errorf("expected media_ref 'Demo Video', got %q", block.MediaPublicId)
+	if block.MediaPublicId != result.MediaEntities[0].PublicId {
+		t.Errorf("expected media_ref to resolve to %q, got %q", result.MediaEntities[0].PublicId, block.MediaPublicId)
 	}
 	if block.PlayerPresetId != "Custom" {
 		t.Errorf("expected player_preset 'Custom', got %q", block.PlayerPresetId)

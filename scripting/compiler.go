@@ -2,8 +2,8 @@ package scripting
 
 import (
 	"fmt"
-	"sort"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,21 +31,21 @@ type CompileResult struct {
 	Assets []*pkgmodels.Asset
 
 	// Video Intelligence entities
-	MediaEntities   []*pkgmodels.Media
-	PlayerPresets   []*pkgmodels.PlayerPreset
-	Channels        []*pkgmodels.MediaChannel
-	MediaWebhooks   []*pkgmodels.MediaWebhook
+	MediaEntities []*pkgmodels.Media
+	PlayerPresets []*pkgmodels.PlayerPreset
+	Channels      []*pkgmodels.MediaChannel
+	MediaWebhooks []*pkgmodels.MediaWebhook
 
 	// LMS entities
-	Quizzes            []*pkgmodels.LMSQuiz
+	Quizzes              []*pkgmodels.LMSQuiz
 	CertificateTemplates []*pkgmodels.CertificateTemplate
 
 	// Campaign entities (one-off email sends)
 	Campaigns []*pkgmodels.Campaign
 
 	// All entities generated, keyed by name for reference.
-	Badges         map[string]*pkgmodels.Badge
-	Tags           map[string]*pkgmodels.Tag
+	Badges map[string]*pkgmodels.Badge
+	Tags   map[string]*pkgmodels.Tag
 
 	// Diagnostics from the compilation pass.
 	Diagnostics Diagnostics
@@ -60,20 +60,20 @@ type Compiler struct {
 	errors       Diagnostics
 
 	// Generated entity maps
-	badges       map[string]*pkgmodels.Badge
-	tags         map[string]*pkgmodels.Tag
+	badges map[string]*pkgmodels.Badge
+	tags   map[string]*pkgmodels.Tag
 
 	// Named reference maps for wiring
 	storyMap     map[string]*pkgmodels.Story        // "story_name" -> entity (for next_story resolution)
-	storylineMap map[string]*pkgmodels.Storyline   // "story:storyline" -> entity
-	enactmentMap map[string]*pkgmodels.Enactment   // "story:storyline:enactment" -> entity
+	storylineMap map[string]*pkgmodels.Storyline    // "story:storyline" -> entity
+	enactmentMap map[string]*pkgmodels.Enactment    // "story:storyline:enactment" -> entity
 	sceneMap     map[string]*pkgmodels.Scene        // "story:storyline:enactment:scene" -> entity
 	funnelMap    map[string]*pkgmodels.Funnel       // "funnel_name" -> entity
 	stageMap     map[string]*pkgmodels.FunnelStage  // "funnel:route:stage" -> entity
 	productMap   map[string]*pkgmodels.Product      // "product_name" -> entity
 	offerMap     map[string]*pkgmodels.Offer        // "offer_name" -> entity
 	mediaMap     map[string]*pkgmodels.Media        // "media_name" -> entity
-	presetMap    map[string]*pkgmodels.PlayerPreset  // "preset_name" -> entity
+	presetMap    map[string]*pkgmodels.PlayerPreset // "preset_name" -> entity
 
 	// Pending asset generation jobs accumulated during compilation
 	pendingAssets []*pkgmodels.Asset
@@ -91,22 +91,22 @@ type Compiler struct {
 // NewCompiler creates a Compiler.
 func NewCompiler(ast *ScriptAST, symbols *SymbolTable, subscriberID string, creatorID bson.ObjectId) *Compiler {
 	return &Compiler{
-		ast:          ast,
-		symbols:      symbols,
-		subscriberID: subscriberID,
-		creatorID:    creatorID,
-		badges:       make(map[string]*pkgmodels.Badge),
-		tags:         make(map[string]*pkgmodels.Tag),
-		storyMap:     make(map[string]*pkgmodels.Story),
-		storylineMap: make(map[string]*pkgmodels.Storyline),
-		enactmentMap: make(map[string]*pkgmodels.Enactment),
-		sceneMap:     make(map[string]*pkgmodels.Scene),
-		funnelMap:    make(map[string]*pkgmodels.Funnel),
-		stageMap:     make(map[string]*pkgmodels.FunnelStage),
-		productMap:   make(map[string]*pkgmodels.Product),
-		offerMap:     make(map[string]*pkgmodels.Offer),
-		mediaMap:     make(map[string]*pkgmodels.Media),
-		presetMap:    make(map[string]*pkgmodels.PlayerPreset),
+		ast:           ast,
+		symbols:       symbols,
+		subscriberID:  subscriberID,
+		creatorID:     creatorID,
+		badges:        make(map[string]*pkgmodels.Badge),
+		tags:          make(map[string]*pkgmodels.Tag),
+		storyMap:      make(map[string]*pkgmodels.Story),
+		storylineMap:  make(map[string]*pkgmodels.Storyline),
+		enactmentMap:  make(map[string]*pkgmodels.Enactment),
+		sceneMap:      make(map[string]*pkgmodels.Scene),
+		funnelMap:     make(map[string]*pkgmodels.Funnel),
+		stageMap:      make(map[string]*pkgmodels.FunnelStage),
+		productMap:    make(map[string]*pkgmodels.Product),
+		offerMap:      make(map[string]*pkgmodels.Offer),
+		mediaMap:      make(map[string]*pkgmodels.Media),
+		presetMap:     make(map[string]*pkgmodels.PlayerPreset),
 		retryCounters: make(map[string]int),
 	}
 }
@@ -121,6 +121,24 @@ func (c *Compiler) Compile() *CompileResult {
 	// Pre-create all badges and tags
 	c.precreateBadges()
 	c.precreateTags()
+
+	// Precompile named media/player definitions before Funnels and other
+	// consumers so media_ref values become stable public IDs in persisted
+	// graphs rather than unresolved authoring names.
+	for _, mediaNode := range c.ast.MediaDecls {
+		media := c.compileMediaDecl(mediaNode)
+		if media != nil {
+			result.MediaEntities = append(result.MediaEntities, media)
+			c.mediaMap[mediaNode.Name] = media
+		}
+	}
+	for _, presetNode := range c.ast.PlayerPresets {
+		preset := c.compilePlayerPresetDecl(presetNode)
+		if preset != nil {
+			result.PlayerPresets = append(result.PlayerPresets, preset)
+			c.presetMap[presetNode.Name] = preset
+		}
+	}
 
 	// Compile each story
 	for _, storyNode := range c.ast.Stories {
@@ -203,23 +221,6 @@ func (c *Compiler) Compile() *CompileResult {
 		if offer != nil {
 			result.Offers = append(result.Offers, offer)
 			c.offerMap[offerNode.Name] = offer
-		}
-	}
-
-	// Compile video intelligence entities
-	for _, mediaNode := range c.ast.MediaDecls {
-		media := c.compileMediaDecl(mediaNode)
-		if media != nil {
-			result.MediaEntities = append(result.MediaEntities, media)
-			c.mediaMap[mediaNode.Name] = media
-		}
-	}
-
-	for _, presetNode := range c.ast.PlayerPresets {
-		preset := c.compilePlayerPresetDecl(presetNode)
-		if preset != nil {
-			result.PlayerPresets = append(result.PlayerPresets, preset)
-			c.presetMap[presetNode.Name] = preset
 		}
 	}
 
@@ -1224,12 +1225,17 @@ func (c *Compiler) compileConditionalRoute(storyNode *StoryNode, node *Condition
 
 func (c *Compiler) compileFunnel(node *FunnelNode) *pkgmodels.Funnel {
 	funnel := &pkgmodels.Funnel{
-		Id:           bson.NewObjectId(),
-		PublicId:     generatePublicID("funnel"),
-		SubscriberId: c.subscriberID,
-		CreatorId:    c.creatorID,
-		Name:         node.Name,
-		Domain:       node.Domain,
+		Id:               bson.NewObjectId(),
+		PublicId:         generatePublicID("funnel"),
+		SubscriberId:     c.subscriberID,
+		CreatorId:        c.creatorID,
+		Name:             node.Name,
+		Domain:           node.Domain,
+		Status:           "published",
+		DraftVersion:     1,
+		PublishedVersion: 1,
+		PublishedName:    node.Name,
+		PublishedDomain:  node.Domain,
 	}
 
 	if node.AIContext != nil {
@@ -1248,6 +1254,9 @@ func (c *Compiler) compileFunnel(node *FunnelNode) *pkgmodels.Funnel {
 		}
 	}
 	funnel.RouteIds = routeIds
+	funnel.PublishedRoutes = funnel.Routes
+	now := time.Now().UTC()
+	funnel.PublishedAt = &now
 
 	c.funnelMap[node.Name] = funnel
 	return funnel
@@ -1451,6 +1460,10 @@ func (c *Compiler) compilePage(node *PageNode) *pkgmodels.FunnelPage {
 }
 
 func (c *Compiler) compileBlock(node *BlockNode) *pkgmodels.PageBlock {
+	mediaPublicID := node.MediaPublicId
+	if media, ok := c.mediaMap[mediaPublicID]; ok {
+		mediaPublicID = media.PublicId
+	}
 	block := &pkgmodels.PageBlock{
 		Id:             bson.NewObjectId(),
 		PublicId:       generatePublicID("block"),
@@ -1458,7 +1471,7 @@ func (c *Compiler) compileBlock(node *BlockNode) *pkgmodels.PageBlock {
 		SectionID:      node.SectionID,
 		BlockType:      node.BlockType,
 		SourceURL:      node.SourceURL,
-		MediaPublicId:  node.MediaPublicId,
+		MediaPublicId:  mediaPublicID,
 		PlayerPresetId: node.PlayerPresetId,
 		Autoplay:       node.Autoplay,
 	}
@@ -1520,9 +1533,9 @@ func (c *Compiler) compileContentGen(node *ContentGenNode) *pkgmodels.ContentGen
 
 func (c *Compiler) compileAIContext(node *AIContextNode) *pkgmodels.AIContextBlock {
 	return &pkgmodels.AIContextBlock{
-		ContextURLs:  node.ContextURLs,
-		ContextRefs:  node.ContextRefs,
-		ContextMode:  node.Mode,
+		ContextURLs: node.ContextURLs,
+		ContextRefs: node.ContextRefs,
+		ContextMode: node.Mode,
 	}
 }
 
@@ -1964,13 +1977,13 @@ func (c *Compiler) compileLMSQuestion(node *LMSQuestionNode, order int) *pkgmode
 // compileOffer compiles an OfferDeclNode into an Offer entity.
 func (c *Compiler) compileOffer(node *OfferDeclNode) *pkgmodels.Offer {
 	offer := &pkgmodels.Offer{
-		Id:           bson.NewObjectId(),
-		PublicId:     generatePublicID("offer"),
-		SubscriberId: c.subscriberID,
-		Title:        node.Name,
-		PricingModel: node.PricingModel,
-		Amount:       int64(node.Price * 100), // Convert dollars to cents
-		Currency:     node.Currency,
+		Id:            bson.NewObjectId(),
+		PublicId:      generatePublicID("offer"),
+		SubscriberId:  c.subscriberID,
+		Title:         node.Name,
+		PricingModel:  node.PricingModel,
+		Amount:        int64(node.Price * 100), // Convert dollars to cents
+		Currency:      node.Currency,
 		GrantedBadges: node.GrantedBadges,
 	}
 
@@ -2005,184 +2018,184 @@ func (c *Compiler) compileOffer(node *OfferDeclNode) *pkgmodels.Offer {
 
 // compileMediaDecl compiles a MediaDeclNode into a Media entity.
 func (c *Compiler) compileMediaDecl(node *MediaDeclNode) *pkgmodels.Media {
-media := &pkgmodels.Media{
-Id:          bson.NewObjectId(),
-PublicId:    generatePublicID("media"),
-SubscriberId: c.subscriberID,
-Title:       node.Title,
-Description: node.Description,
-Kind:        node.Kind,
-SourceURL:   node.SourceURL,
-PosterURL:   node.PosterURL,
-Status:      "draft",
-Tags:        node.Tags,
-Folder:      node.Folder,
-}
+	media := &pkgmodels.Media{
+		Id:           bson.NewObjectId(),
+		PublicId:     generatePublicID("media"),
+		SubscriberId: c.subscriberID,
+		Title:        node.Title,
+		Description:  node.Description,
+		Kind:         node.Kind,
+		SourceURL:    node.SourceURL,
+		PosterURL:    node.PosterURL,
+		Status:       "draft",
+		Tags:         node.Tags,
+		Folder:       node.Folder,
+	}
 
-if media.Title == "" {
-media.Title = node.Name
-}
-if media.Kind == "" {
-media.Kind = "video"
-}
+	if media.Title == "" {
+		media.Title = node.Name
+	}
+	if media.Kind == "" {
+		media.Kind = "video"
+	}
 
-// Compile chapters
-for _, ch := range node.Chapters {
-chapter := &pkgmodels.MediaChapter{
-PublicId: generatePublicID("chapter"),
-Title:    ch.Title,
-StartSec: ch.StartSec,
-EndSec:   ch.EndSec,
-}
-media.Chapters = append(media.Chapters, chapter)
-}
+	// Compile chapters
+	for _, ch := range node.Chapters {
+		chapter := &pkgmodels.MediaChapter{
+			PublicId: generatePublicID("chapter"),
+			Title:    ch.Title,
+			StartSec: ch.StartSec,
+			EndSec:   ch.EndSec,
+		}
+		media.Chapters = append(media.Chapters, chapter)
+	}
 
-// Compile interactions
-for _, inter := range node.Interactions {
-interaction := &pkgmodels.MediaInteraction{
-PublicId: generatePublicID("interaction"),
-Kind:     inter.Kind,
-StartSec: inter.StartSec,
-EndSec:   inter.EndSec,
-}
-switch inter.Kind {
-case "turnstile":
-interaction.Config = pkgmodels.TurnstileConfig{
-Required: inter.Required,
-Fields:   inter.Fields,
-}
-case "cta":
-interaction.Config = pkgmodels.CTAConfig{
-Text:       inter.Text,
-URL:        inter.URL,
-ButtonText: inter.ButtonText,
-}
-case "annotation":
-interaction.Config = pkgmodels.AnnotationConfig{
-Text: inter.Text,
-URL:  inter.URL,
-}
-}
-media.Interactions = append(media.Interactions, interaction)
-}
+	// Compile interactions
+	for _, inter := range node.Interactions {
+		interaction := &pkgmodels.MediaInteraction{
+			PublicId: generatePublicID("interaction"),
+			Kind:     inter.Kind,
+			StartSec: inter.StartSec,
+			EndSec:   inter.EndSec,
+		}
+		switch inter.Kind {
+		case "turnstile":
+			interaction.Config = pkgmodels.TurnstileConfig{
+				Required: inter.Required,
+				Fields:   inter.Fields,
+			}
+		case "cta":
+			interaction.Config = pkgmodels.CTAConfig{
+				Text:       inter.Text,
+				URL:        inter.URL,
+				ButtonText: inter.ButtonText,
+			}
+		case "annotation":
+			interaction.Config = pkgmodels.AnnotationConfig{
+				Text: inter.Text,
+				URL:  inter.URL,
+			}
+		}
+		media.Interactions = append(media.Interactions, interaction)
+	}
 
-// Compile badge rules
-for _, br := range node.BadgeRules {
-rule := &pkgmodels.MediaBadgeRule{
-PublicId:      generatePublicID("badge_rule"),
-EventName:     br.EventName,
-Operator:      br.Operator,
-Threshold:     br.Threshold,
-BadgePublicId: br.BadgeName,
-Enabled:       br.Enabled,
-}
+	// Compile badge rules
+	for _, br := range node.BadgeRules {
+		rule := &pkgmodels.MediaBadgeRule{
+			PublicId:      generatePublicID("badge_rule"),
+			EventName:     br.EventName,
+			Operator:      br.Operator,
+			Threshold:     br.Threshold,
+			BadgePublicId: br.BadgeName,
+			Enabled:       br.Enabled,
+		}
 
-// Pre-create referenced badge
-if br.BadgeName != "" {
-if _, exists := c.badges[br.BadgeName]; !exists {
-badge := &pkgmodels.Badge{
-Id:           bson.NewObjectId(),
-PublicId:     generatePublicID("badge"),
-SubscriberId: c.subscriberID,
-CreatorId:    c.creatorID,
-Name:         br.BadgeName,
-Description:  fmt.Sprintf("Auto-generated badge: %s", br.BadgeName),
-}
-c.badges[br.BadgeName] = badge
-}
-}
+		// Pre-create referenced badge
+		if br.BadgeName != "" {
+			if _, exists := c.badges[br.BadgeName]; !exists {
+				badge := &pkgmodels.Badge{
+					Id:           bson.NewObjectId(),
+					PublicId:     generatePublicID("badge"),
+					SubscriberId: c.subscriberID,
+					CreatorId:    c.creatorID,
+					Name:         br.BadgeName,
+					Description:  fmt.Sprintf("Auto-generated badge: %s", br.BadgeName),
+				}
+				c.badges[br.BadgeName] = badge
+			}
+		}
 
-media.BadgeRules = append(media.BadgeRules, rule)
-}
+		media.BadgeRules = append(media.BadgeRules, rule)
+	}
 
-// Resolve player preset reference
-if node.PlayerPreset != "" {
-if preset, ok := c.presetMap[node.PlayerPreset]; ok {
-media.PlayerPresetID = &preset.Id
-}
-}
+	// Resolve player preset reference
+	if node.PlayerPreset != "" {
+		if preset, ok := c.presetMap[node.PlayerPreset]; ok {
+			media.PlayerPresetID = &preset.Id
+		}
+	}
 
-return media
+	return media
 }
 
 // compilePlayerPresetDecl compiles a PlayerPresetDeclNode into a PlayerPreset entity.
 func (c *Compiler) compilePlayerPresetDecl(node *PlayerPresetDeclNode) *pkgmodels.PlayerPreset {
 	return &pkgmodels.PlayerPreset{
-		Id:                bson.NewObjectId(),
-		PublicId:          generatePublicID("preset"),
-		SubscriberId:      c.subscriberID,
-		Name:              node.Name,
+		Id:           bson.NewObjectId(),
+		PublicId:     generatePublicID("preset"),
+		SubscriberId: c.subscriberID,
+		Name:         node.Name,
 		// Appearance
-		PlayerColor:       node.PlayerColor,
-		ShowControls:      node.ShowControls,
+		PlayerColor:  node.PlayerColor,
+		ShowControls: node.ShowControls,
 		// Show Buttons
-		ShowRewind:        node.ShowRewind,
-		ShowFastForward:   node.ShowFastForward,
-		ShowSkip:          node.ShowSkip,
-		ShowDownload:      node.ShowDownload,
-		HideProgressBar:   node.HideProgressBar,
+		ShowRewind:      node.ShowRewind,
+		ShowFastForward: node.ShowFastForward,
+		ShowSkip:        node.ShowSkip,
+		ShowDownload:    node.ShowDownload,
+		HideProgressBar: node.HideProgressBar,
 		// Other controls
 		ShowBigPlayButton: node.ShowBigPlayButton,
 		AllowFullscreen:   node.AllowFullscreen,
 		AllowPlaybackRate: node.AllowPlaybackRate,
 		AllowSeeking:      node.AllowSeeking,
 		// Behaviour
-		Autoplay:          node.Autoplay,
-		MutedDefault:      node.MutedDefault,
-		DisablePause:      node.DisablePause,
+		Autoplay:     node.Autoplay,
+		MutedDefault: node.MutedDefault,
+		DisablePause: node.DisablePause,
 		// End behaviour
-		EndBehavior:       node.EndBehavior,
+		EndBehavior: node.EndBehavior,
 		// Player style
-		RoundedPlayer:     node.RoundedPlayer,
+		RoundedPlayer: node.RoundedPlayer,
 		// Chapter controls
-		ChapterStyle:      node.ChapterStyle,
-		ChapterPosition:   node.ChapterPosition,
-		ChapterClickJump:  node.ChapterClickJump,
+		ChapterStyle:     node.ChapterStyle,
+		ChapterPosition:  node.ChapterPosition,
+		ChapterClickJump: node.ChapterClickJump,
 	}
 }
 
 // compileChannelDecl compiles a ChannelDeclNode into a MediaChannel entity.
 func (c *Compiler) compileChannelDecl(node *ChannelDeclNode) *pkgmodels.MediaChannel {
-channel := &pkgmodels.MediaChannel{
-Id:          bson.NewObjectId(),
-PublicId:    generatePublicID("channel"),
-SubscriberId: c.subscriberID,
-Title:       node.Title,
-Description: node.Description,
-Layout:      node.Layout,
-Theme:       node.Theme,
-}
-if channel.Title == "" {
-channel.Title = node.Name
-}
+	channel := &pkgmodels.MediaChannel{
+		Id:           bson.NewObjectId(),
+		PublicId:     generatePublicID("channel"),
+		SubscriberId: c.subscriberID,
+		Title:        node.Title,
+		Description:  node.Description,
+		Layout:       node.Layout,
+		Theme:        node.Theme,
+	}
+	if channel.Title == "" {
+		channel.Title = node.Name
+	}
 
-// Resolve media items by name
-for i, mediaName := range node.Items {
-item := &pkgmodels.MediaChannelItem{
-MediaPublicId: mediaName,
-Order:         i + 1,
-}
-// If we compiled a media with this name, use its public_id
-if media, ok := c.mediaMap[mediaName]; ok {
-item.MediaPublicId = media.PublicId
-}
-channel.Items = append(channel.Items, item)
-}
+	// Resolve media items by name
+	for i, mediaName := range node.Items {
+		item := &pkgmodels.MediaChannelItem{
+			MediaPublicId: mediaName,
+			Order:         i + 1,
+		}
+		// If we compiled a media with this name, use its public_id
+		if media, ok := c.mediaMap[mediaName]; ok {
+			item.MediaPublicId = media.PublicId
+		}
+		channel.Items = append(channel.Items, item)
+	}
 
-return channel
+	return channel
 }
 
 // compileMediaWebhookDecl compiles a MediaWebhookDeclNode into a MediaWebhook entity.
 func (c *Compiler) compileMediaWebhookDecl(node *MediaWebhookDeclNode) *pkgmodels.MediaWebhook {
-return &pkgmodels.MediaWebhook{
-Id:           bson.NewObjectId(),
-PublicId:     generatePublicID("webhook"),
-SubscriberId: c.subscriberID,
-Name:         node.Name,
-URL:          node.URL,
-EventTypes:   node.EventTypes,
-Enabled:      node.Enabled,
-}
+	return &pkgmodels.MediaWebhook{
+		Id:           bson.NewObjectId(),
+		PublicId:     generatePublicID("webhook"),
+		SubscriberId: c.subscriberID,
+		Name:         node.Name,
+		URL:          node.URL,
+		EventTypes:   node.EventTypes,
+		Enabled:      node.Enabled,
+	}
 }
 
 // ---------- Campaign Compilation ----------
