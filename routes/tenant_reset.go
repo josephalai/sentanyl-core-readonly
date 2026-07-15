@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/josephalai/sentanyl/pkg/audit"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
@@ -108,6 +109,9 @@ func HandleTenantResetAllData(c *gin.Context) {
 	}
 
 	log.Printf("resetAllData: tenant %s — total %d documents removed", tid, totalRemoved)
+	ae := audit.FromContext(c)
+	ae.Action, ae.Outcome = "tenant.reset_all_data", "success"
+	audit.Record(ae)
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "ok",
 		"total_removed": totalRemoved,

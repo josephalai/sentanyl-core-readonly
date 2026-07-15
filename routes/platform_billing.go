@@ -10,6 +10,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 
 	"github.com/josephalai/sentanyl/core-service/internal/billing"
+	"github.com/josephalai/sentanyl/pkg/audit"
 	"github.com/josephalai/sentanyl/pkg/auth"
 	"github.com/josephalai/sentanyl/pkg/db"
 	"github.com/josephalai/sentanyl/pkg/models"
@@ -245,6 +246,10 @@ func HandleChangeBillingPlan(c *gin.Context) {
 		_ = db.GetCollection(models.TenantCollection).UpdateId(tenantID,
 			bson.M{"$unset": bson.M{"limit_grace_started_at": ""}})
 	}
+	ae := audit.FromContext(c)
+	ae.Action, ae.Outcome = "billing.plan.change", "success"
+	ae.TargetType, ae.TargetID = "plan", target.Tier
+	audit.Record(ae)
 	c.JSON(http.StatusOK, gin.H{"plan_tier": target.Tier, "changed": true, "contacts_released": released})
 }
 

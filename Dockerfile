@@ -16,4 +16,8 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 COPY --from=builder /app/core-service .
 EXPOSE 8081
+# OPS-003: image-level liveness so any orchestrator (not just our compose file)
+# inherits the health contract.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD wget -qO- http://localhost:8081/health || exit 1
+
 CMD ["./core-service"]
