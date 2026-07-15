@@ -21,10 +21,10 @@ import (
 // past. Omitted (nil) offsets $unset the field.
 func HandleTestSetBilling(c *gin.Context) {
 	var req struct {
-		TenantID              string   `json:"tenant_id"`
-		SubscriptionStatus    string   `json:"subscription_status"`
-		TrialEndsOffsetHours  *float64 `json:"trial_ends_offset_hours"`
-		PastDueAtOffsetHours  *float64 `json:"past_due_at_offset_hours"`
+		TenantID             string   `json:"tenant_id"`
+		SubscriptionStatus   string   `json:"subscription_status"`
+		TrialEndsOffsetHours *float64 `json:"trial_ends_offset_hours"`
+		PastDueAtOffsetHours *float64 `json:"past_due_at_offset_hours"`
 		// Tier-limit fixtures (flow 16 tier walk):
 		PlanTier              string   `json:"plan_tier"`
 		LimitGraceOffsetHours *float64 `json:"limit_grace_offset_hours"`
@@ -112,4 +112,12 @@ func HandleTestSetBilling(c *gin.Context) {
 	}
 	plans.Invalidate(tenantID)
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "released": released})
+}
+
+// HandleTestReconcileBilling synchronously drives the production lifecycle
+// reconciliation pass for adversarial E2E evidence.
+func HandleTestReconcileBilling(c *gin.Context) {
+	applyDueBillingChanges(time.Now().UTC())
+	reconcileScheduledCancellations(time.Now().UTC())
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

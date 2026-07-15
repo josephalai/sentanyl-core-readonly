@@ -12,8 +12,8 @@ import (
 	"github.com/josephalai/sentanyl/core-service/routes"
 	"github.com/josephalai/sentanyl/pkg/audit"
 	"github.com/josephalai/sentanyl/pkg/auth"
-	"github.com/josephalai/sentanyl/pkg/config"
 	"github.com/josephalai/sentanyl/pkg/badges"
+	"github.com/josephalai/sentanyl/pkg/config"
 	"github.com/josephalai/sentanyl/pkg/db"
 	httputil "github.com/josephalai/sentanyl/pkg/http"
 	"github.com/josephalai/sentanyl/pkg/jobs"
@@ -122,6 +122,7 @@ func main() {
 		// status / trial / past-due timestamps directly so enforcement can be
 		// exercised without live Stripe. Never registered in production.
 		r.POST("/internal/test/set-billing", routes.HandleTestSetBilling)
+		r.POST("/internal/test/reconcile-billing", routes.HandleTestReconcileBilling)
 		// Story-scheduler fast-forward for lifecycle/product flows: rewinds
 		// active story_sessions' sent_at and runs one synchronous scheduler
 		// pass so multi-day waits can be walked in seconds.
@@ -176,6 +177,9 @@ func main() {
 		tenantAPI.GET("/billing/plans", routes.HandleListBillingPlans)
 		tenantAPI.POST("/billing/checkout-session", auth.RequirePermission(auth.PermBillingManage), routes.HandleCreateBillingCheckoutSession)
 		tenantAPI.POST("/billing/change-plan", auth.RequirePermission(auth.PermBillingManage), routes.HandleChangeBillingPlan)
+		tenantAPI.POST("/billing/schedule-cancel", auth.RequirePermission(auth.PermBillingManage), routes.HandleScheduleBillingCancellation)
+		tenantAPI.POST("/billing/reactivate", auth.RequirePermission(auth.PermBillingManage), routes.HandleReactivateBillingSubscription)
+		tenantAPI.POST("/billing/cancel-scheduled-change", auth.RequirePermission(auth.PermBillingManage), routes.HandleCancelScheduledBillingChange)
 		tenantAPI.POST("/billing/portal-session", auth.RequirePermission(auth.PermBillingManage), routes.HandleCreateBillingPortalSession)
 
 		// Machine API key (tenant send API + MCP) — owner-only secret management.

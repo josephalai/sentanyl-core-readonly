@@ -67,6 +67,12 @@ func HandleGetBillingStatus(c *gin.Context) {
 		"gated":               !auth.SubscriptionAllowed(&tenant, now),
 		"days_left":           daysLeft,
 	}
+	if tenant.BillingChangeKind != "" && tenant.BillingChangeEffectiveAt != nil {
+		resp["pending_change"] = gin.H{
+			"kind": tenant.BillingChangeKind, "to_tier": tenant.PendingPlanTier,
+			"effective_at": tenant.BillingChangeEffectiveAt,
+		}
+	}
 	if limits, err := plans.ContactLimitStatus(&tenant, now); err == nil {
 		resp["plan_tier"] = limits.Plan.Tier
 		resp["plan"] = limits.Plan
@@ -193,6 +199,10 @@ func HandleChangeBillingPlan(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plan_tier": current.Tier, "changed": false})
 		return
 	}
+	if tenant.BillingChangeKind != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "a billing change is already scheduled"})
+		return
+	}
 
 	// Downgrades must fit: refuse while usage exceeds the target's limits so a
 	// tenant can't dodge enforcement by paying less than their list costs.
@@ -212,6 +222,25 @@ func HandleChangeBillingPlan(c *gin.Context) {
 	if err != nil {
 		log.Printf("[platform billing] get subscription item: %v", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to load subscription"})
+		return
+	}
+	if target.PriceUSD < current.PriceUSD {
+		if item.CurrentPeriodEnd.IsZero() || !item.CurrentPeriodEnd.After(time.Now()) {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "subscription has no future billing boundary"})
+			return
+		}
+		intent := models.NewScheduledBillingChange(tenantID, models.BillingChangePlan, current.Tier, target.Tier, tenant.PlatformSubscriptionID, item.CurrentPeriodEnd)
+		if err := projectBillingChange(tenantID, models.BillingChangePlan, target.Tier, item.CurrentPeriodEnd); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "a billing change is already scheduled"})
+			return
+		}
+		if err := db.GetCollection(models.PlanChangeIntentCollection).Insert(intent); err != nil {
+			_ = clearBillingChange(tenantID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record scheduled downgrade"})
+			return
+		}
+		recordBillingLifecycleAudit(c, "billing.plan.downgrade.schedule", target.Tier, item.CurrentPeriodEnd)
+		c.JSON(http.StatusAccepted, gin.H{"plan_tier": current.Tier, "to_tier": target.Tier, "scheduled": true, "effective_at": item.CurrentPeriodEnd})
 		return
 	}
 	// BILL-003: persist the intent BEFORE the Stripe mutation. If Stripe
@@ -251,6 +280,128 @@ func HandleChangeBillingPlan(c *gin.Context) {
 	ae.TargetType, ae.TargetID = "plan", target.Tier
 	audit.Record(ae)
 	c.JSON(http.StatusOK, gin.H{"plan_tier": target.Tier, "changed": true, "contacts_released": released})
+}
+
+func projectBillingChange(tenantID bson.ObjectId, kind, toTier string, effectiveAt time.Time) error {
+	return db.GetCollection(models.TenantCollection).Update(
+		bson.M{"_id": tenantID, "$or": []bson.M{{"billing_change_kind": bson.M{"$exists": false}}, {"billing_change_kind": ""}}},
+		bson.M{"$set": bson.M{"billing_change_kind": kind, "pending_plan_tier": toTier, "billing_change_effective_at": effectiveAt.UTC()}},
+	)
+}
+
+func clearBillingChange(tenantID bson.ObjectId) error {
+	return db.GetCollection(models.TenantCollection).UpdateId(tenantID, bson.M{"$unset": bson.M{
+		"billing_change_kind": "", "pending_plan_tier": "", "billing_change_effective_at": "",
+	}})
+}
+
+func recordBillingLifecycleAudit(c *gin.Context, action, target string, effectiveAt time.Time) {
+	e := audit.FromContext(c)
+	e.Action, e.Outcome, e.TargetType, e.TargetID = action, "success", "platform_subscription", target
+	e.Meta = bson.M{"effective_at": effectiveAt.UTC()}
+	audit.Record(e)
+}
+
+// HandleScheduleBillingCancellation keeps access through the paid-through
+// period while projecting the exact cancellation date in Sentanyl.
+func HandleScheduleBillingCancellation(c *gin.Context) {
+	tenantID := auth.GetTenantObjectID(c)
+	var tenant models.Tenant
+	if tenantID == "" || db.GetCollection(models.TenantCollection).FindId(tenantID).One(&tenant) != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if tenant.PlatformSubscriptionID == "" || tenant.BillingChangeKind != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "subscription cannot be scheduled for cancellation"})
+		return
+	}
+	key := platformStripeKey()
+	if key == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "platform billing is not configured"})
+		return
+	}
+	item, err := billing.GetSubscriptionItem(key, tenant.PlatformSubscriptionID)
+	if err != nil || !item.CurrentPeriodEnd.After(time.Now()) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to load subscription billing boundary"})
+		return
+	}
+	intent := models.NewScheduledBillingChange(tenantID, models.BillingChangeCancel, tenant.PlanTier, "", tenant.PlatformSubscriptionID, item.CurrentPeriodEnd)
+	if err := projectBillingChange(tenantID, models.BillingChangeCancel, "", item.CurrentPeriodEnd); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "a billing change is already scheduled"})
+		return
+	}
+	if err := db.GetCollection(models.PlanChangeIntentCollection).Insert(intent); err != nil {
+		_ = clearBillingChange(tenantID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record cancellation"})
+		return
+	}
+	if err := billing.SetSubscriptionCancelAtPeriodEnd(key, tenant.PlatformSubscriptionID, true); err != nil {
+		resolvePlanIntent(intent.Id, models.PlanChangeIntentFailed, "", "stripe cancellation failed: "+err.Error())
+		_ = clearBillingChange(tenantID)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to schedule cancellation"})
+		return
+	}
+	recordBillingLifecycleAudit(c, "billing.subscription.cancel.schedule", tenant.PlatformSubscriptionID, item.CurrentPeriodEnd)
+	c.JSON(http.StatusAccepted, gin.H{"scheduled": true, "effective_at": item.CurrentPeriodEnd})
+}
+
+// HandleReactivateBillingSubscription reverses an end-of-period cancellation.
+func HandleReactivateBillingSubscription(c *gin.Context) {
+	tenantID := auth.GetTenantObjectID(c)
+	var tenant models.Tenant
+	if tenantID == "" || db.GetCollection(models.TenantCollection).FindId(tenantID).One(&tenant) != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if tenant.BillingChangeKind != models.BillingChangeCancel || tenant.PlatformSubscriptionID == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "no scheduled cancellation to reverse"})
+		return
+	}
+	if platformStripeKey() == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "platform billing is not configured"})
+		return
+	}
+	if err := db.GetCollection(models.TenantCollection).Update(
+		bson.M{"_id": tenantID, "billing_change_kind": models.BillingChangeCancel},
+		bson.M{"$set": bson.M{"billing_change_kind": models.BillingChangeReactivate}},
+	); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "cancellation is already being reversed"})
+		return
+	}
+	if err := billing.SetSubscriptionCancelAtPeriodEnd(platformStripeKey(), tenant.PlatformSubscriptionID, false); err != nil {
+		_ = db.GetCollection(models.TenantCollection).UpdateId(tenantID, bson.M{"$set": bson.M{"billing_change_kind": models.BillingChangeCancel}})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reactivate subscription"})
+		return
+	}
+	markScheduledIntents(tenantID, models.BillingChangeCancel, models.PlanChangeIntentCanceled, "cancellation reversed")
+	intent := models.NewPlanChangeIntent(tenantID, tenant.PlanTier, tenant.PlanTier, tenant.PlatformSubscriptionID)
+	intent.Kind = models.BillingChangeReactivate
+	intent.Status = models.PlanChangeIntentConfirmed
+	now := time.Now().UTC()
+	intent.ResolvedAt = &now
+	intent.Note = "reactivated inline"
+	_ = db.GetCollection(models.PlanChangeIntentCollection).Insert(intent)
+	_ = clearBillingChange(tenantID)
+	recordBillingLifecycleAudit(c, "billing.subscription.reactivate", tenant.PlatformSubscriptionID, now)
+	c.JSON(http.StatusOK, gin.H{"reactivated": true})
+}
+
+// HandleCancelScheduledBillingChange withdraws a local future downgrade.
+func HandleCancelScheduledBillingChange(c *gin.Context) {
+	tenantID := auth.GetTenantObjectID(c)
+	var tenant models.Tenant
+	if tenantID == "" || db.GetCollection(models.TenantCollection).FindId(tenantID).One(&tenant) != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if tenant.BillingChangeKind != models.BillingChangePlan {
+		c.JSON(http.StatusConflict, gin.H{"error": "no scheduled downgrade to cancel"})
+		return
+	}
+	markScheduledIntents(tenantID, models.BillingChangePlan, models.PlanChangeIntentCanceled, "scheduled downgrade withdrawn")
+	_ = clearBillingChange(tenantID)
+	recordBillingLifecycleAudit(c, "billing.plan.downgrade.cancel", tenant.PendingPlanTier, time.Now())
+	c.JSON(http.StatusOK, gin.H{"canceled": true})
 }
 
 // HandleCreateBillingPortalSession returns a Stripe Billing Portal URL for

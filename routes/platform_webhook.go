@@ -238,11 +238,13 @@ func platformCheckoutCompleted(raw json.RawMessage) error {
 
 func platformSubscriptionUpdated(raw json.RawMessage) error {
 	var sub struct {
-		ID       string            `json:"id"`
-		Status   string            `json:"status"`
-		Customer string            `json:"customer"`
-		Metadata map[string]string `json:"metadata"`
-		Items    struct {
+		ID                string            `json:"id"`
+		Status            string            `json:"status"`
+		Customer          string            `json:"customer"`
+		Metadata          map[string]string `json:"metadata"`
+		CancelAtPeriodEnd bool              `json:"cancel_at_period_end"`
+		CurrentPeriodEnd  int64             `json:"current_period_end"`
+		Items             struct {
 			Data []struct {
 				Price struct {
 					ID string `json:"id"`
@@ -273,6 +275,19 @@ func platformSubscriptionUpdated(raw json.RawMessage) error {
 		set["plan_tier"] = sub.Metadata["plan_tier"]
 	}
 	unset := bson.M{}
+	if sub.CancelAtPeriodEnd && sub.CurrentPeriodEnd > 0 {
+		set["billing_change_kind"] = models.BillingChangeCancel
+		set["billing_change_effective_at"] = time.Unix(sub.CurrentPeriodEnd, 0).UTC()
+		unset["pending_plan_tier"] = ""
+	} else {
+		var current models.Tenant
+		if db.GetCollection(models.TenantCollection).FindId(tenantID).Select(bson.M{"billing_change_kind": 1}).One(&current) == nil && current.BillingChangeKind == models.BillingChangeCancel {
+			unset["billing_change_kind"] = ""
+			unset["billing_change_effective_at"] = ""
+			unset["pending_plan_tier"] = ""
+			markScheduledIntents(tenantID, models.BillingChangeCancel, models.PlanChangeIntentCanceled, "cancellation reversed at Stripe")
+		}
+	}
 	switch sub.Status {
 	case "trialing":
 		set["subscription_status"] = "trial"
@@ -339,8 +354,14 @@ func platformSubscriptionDeleted(raw json.RawMessage) error {
 	if !ok {
 		return nil
 	}
-	return db.GetCollection(models.TenantCollection).UpdateId(tenantID,
-		bson.M{"$set": bson.M{"subscription_status": "canceled"}})
+	if err := db.GetCollection(models.TenantCollection).UpdateId(tenantID, bson.M{
+		"$set":   bson.M{"subscription_status": "canceled"},
+		"$unset": bson.M{"billing_change_kind": "", "billing_change_effective_at": "", "pending_plan_tier": ""},
+	}); err != nil {
+		return err
+	}
+	markScheduledIntents(tenantID, models.BillingChangeCancel, models.PlanChangeIntentConfirmed, "subscription ended at paid-through boundary")
+	return nil
 }
 
 func platformInvoicePaymentFailed(raw json.RawMessage) error {
@@ -383,14 +404,14 @@ func platformInvoicePaid(raw json.RawMessage) error {
 // Stripe invoice payload. Idempotent on (tenant, stripe_invoice_id).
 func upsertInvoiceProjection(tenantID bson.ObjectId, raw json.RawMessage, status string) {
 	var inv struct {
-		ID              string `json:"id"`
-		Number          string `json:"number"`
-		AmountDue       int64  `json:"amount_due"`
-		AmountPaid      int64  `json:"amount_paid"`
-		Currency        string `json:"currency"`
+		ID               string `json:"id"`
+		Number           string `json:"number"`
+		AmountDue        int64  `json:"amount_due"`
+		AmountPaid       int64  `json:"amount_paid"`
+		Currency         string `json:"currency"`
 		HostedInvoiceURL string `json:"hosted_invoice_url"`
-		PeriodStart     int64  `json:"period_start"`
-		PeriodEnd       int64  `json:"period_end"`
+		PeriodStart      int64  `json:"period_start"`
+		PeriodEnd        int64  `json:"period_end"`
 	}
 	if err := json.Unmarshal(raw, &inv); err != nil || inv.ID == "" {
 		return

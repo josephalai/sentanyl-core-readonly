@@ -38,10 +38,20 @@ func EnsurePlanIntentIndexes() {
 func resolvePlanIntent(id bson.ObjectId, status, resolvedTier, note string) {
 	now := time.Now()
 	if err := db.GetCollection(models.PlanChangeIntentCollection).Update(
-		bson.M{"_id": id, "status": models.PlanChangeIntentPending},
+		bson.M{"_id": id, "status": bson.M{"$in": []string{models.PlanChangeIntentPending, models.PlanChangeIntentScheduled}}},
 		bson.M{"$set": bson.M{"status": status, "resolved_tier": resolvedTier, "note": note, "resolved_at": now}},
 	); err != nil && err != mgo.ErrNotFound {
 		log.Printf("billing: resolve plan intent %s: %v", id.Hex(), err)
+	}
+}
+
+func markScheduledIntents(tenantID bson.ObjectId, kind, status, note string) {
+	now := time.Now().UTC()
+	_, err := db.GetCollection(models.PlanChangeIntentCollection).UpdateAll(bson.M{
+		"tenant_id": tenantID, "kind": kind, "status": models.PlanChangeIntentScheduled,
+	}, bson.M{"$set": bson.M{"status": status, "note": note, "resolved_at": now}})
+	if err != nil {
+		log.Printf("billing: settle scheduled %s intent: %v", kind, err)
 	}
 }
 
@@ -122,5 +132,84 @@ func reconcileStalePlanIntents(olderThan time.Time) {
 		plans.Invalidate(in.TenantID)
 		resolvePlanIntent(in.Id, models.PlanChangeIntentConfirmed, tier, "reconciled from stripe")
 		log.Printf("billing: plan intent %s reconciled to tier %s (tenant %s)", in.Id.Hex(), tier, in.TenantID.Hex())
+	}
+	applyDueBillingChanges(time.Now().UTC())
+	reconcileScheduledCancellations(time.Now().UTC())
+}
+
+// applyDueBillingChanges performs future downgrades only after the existing
+// paid period ends. If Stripe succeeds and the local write fails, the intent
+// remains scheduled and the next sweep converges from Stripe's price.
+func applyDueBillingChanges(now time.Time) {
+	key := platformStripeKey()
+	if key == "" {
+		return
+	}
+	var due []models.PlanChangeIntent
+	if err := db.GetCollection(models.PlanChangeIntentCollection).Find(bson.M{
+		"kind": models.BillingChangePlan, "status": models.PlanChangeIntentScheduled,
+		"effective_at": bson.M{"$lte": now},
+	}).Limit(50).All(&due); err != nil {
+		return
+	}
+	for _, in := range due {
+		target, ok := plans.ByTier(in.ToTier)
+		if !ok {
+			resolvePlanIntent(in.Id, models.PlanChangeIntentFailed, "", "unknown target tier")
+			_ = clearBillingChange(in.TenantID)
+			continue
+		}
+		item, err := billing.GetSubscriptionItem(key, in.StripeSubID)
+		if err != nil {
+			continue
+		}
+		priceID := plans.StripePriceID(target.Tier)
+		if item.PriceID != priceID {
+			if err := billing.UpdateSubscriptionPrice(key, in.StripeSubID, item.ItemID, priceID); err != nil {
+				continue
+			}
+		}
+		if err := db.GetCollection(models.TenantCollection).UpdateId(in.TenantID, bson.M{
+			"$set":   bson.M{"plan_tier": target.Tier, "plan_contract": plans.SnapshotContract(target.Tier)},
+			"$unset": bson.M{"billing_change_kind": "", "pending_plan_tier": "", "billing_change_effective_at": ""},
+		}); err != nil {
+			continue
+		}
+		plans.Invalidate(in.TenantID)
+		resolvePlanIntent(in.Id, models.PlanChangeIntentConfirmed, target.Tier, "effective-dated downgrade applied")
+	}
+}
+
+// reconcileScheduledCancellations repairs a projection lost after Stripe
+// accepted cancel_at_period_end. It never grants access or changes the paid
+// through date; Stripe remains authoritative.
+func reconcileScheduledCancellations(now time.Time) {
+	key := platformStripeKey()
+	if key == "" {
+		return
+	}
+	var scheduled []models.PlanChangeIntent
+	if err := db.GetCollection(models.PlanChangeIntentCollection).Find(bson.M{
+		"kind": models.BillingChangeCancel, "status": models.PlanChangeIntentScheduled,
+	}).Limit(50).All(&scheduled); err != nil {
+		return
+	}
+	for _, in := range scheduled {
+		item, err := billing.GetSubscriptionItem(key, in.StripeSubID)
+		if err != nil {
+			continue
+		}
+		if !item.CancelAtPeriodEnd {
+			resolvePlanIntent(in.Id, models.PlanChangeIntentCanceled, "", "Stripe cancellation no longer scheduled")
+			_ = clearBillingChange(in.TenantID)
+			continue
+		}
+		effective := item.CurrentPeriodEnd
+		if effective.IsZero() && in.EffectiveAt != nil {
+			effective = *in.EffectiveAt
+		}
+		_ = db.GetCollection(models.TenantCollection).UpdateId(in.TenantID, bson.M{"$set": bson.M{
+			"billing_change_kind": models.BillingChangeCancel, "billing_change_effective_at": effective, "pending_plan_tier": "",
+		}})
 	}
 }

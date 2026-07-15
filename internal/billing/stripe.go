@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +56,11 @@ func newIdempotencyKey() string {
 // structured StripeError immediately. A stable idempotency key is reused
 // across retries of the same POST so retries are safe.
 func stripeDo(method, secretKey, path string, form url.Values, idempotencyKey string, out interface{}) error {
-	return stripeDoBase("https://api.stripe.com", method, secretKey, path, form, idempotencyKey, out)
+	base := os.Getenv("STRIPE_API_BASE")
+	if base == "" {
+		base = "https://api.stripe.com"
+	}
+	return stripeDoBase(strings.TrimRight(base, "/"), method, secretKey, path, form, idempotencyKey, out)
 }
 
 // stripeDoBase is stripeDo with an overridable base URL (test seam).
@@ -212,17 +217,21 @@ func stripeGet(secretKey, path string, out interface{}) error {
 
 // SubscriptionItem is the single line item on a platform subscription.
 type SubscriptionItem struct {
-	ItemID  string
-	PriceID string
-	Status  string
+	ItemID            string
+	PriceID           string
+	Status            string
+	CurrentPeriodEnd  time.Time
+	CancelAtPeriodEnd bool
 }
 
 // GetSubscriptionItem fetches the subscription's first item — platform
 // subscriptions always have exactly one (the plan Price).
 func GetSubscriptionItem(secretKey, subscriptionID string) (SubscriptionItem, error) {
 	var out struct {
-		Status string `json:"status"`
-		Items  struct {
+		Status            string `json:"status"`
+		CurrentPeriodEnd  int64  `json:"current_period_end"`
+		CancelAtPeriodEnd bool   `json:"cancel_at_period_end"`
+		Items             struct {
 			Data []struct {
 				ID    string `json:"id"`
 				Price struct {
@@ -238,10 +247,20 @@ func GetSubscriptionItem(secretKey, subscriptionID string) (SubscriptionItem, er
 		return SubscriptionItem{}, fmt.Errorf("subscription %s has no items", subscriptionID)
 	}
 	return SubscriptionItem{
-		ItemID:  out.Items.Data[0].ID,
-		PriceID: out.Items.Data[0].Price.ID,
-		Status:  out.Status,
+		ItemID:            out.Items.Data[0].ID,
+		PriceID:           out.Items.Data[0].Price.ID,
+		Status:            out.Status,
+		CurrentPeriodEnd:  time.Unix(out.CurrentPeriodEnd, 0).UTC(),
+		CancelAtPeriodEnd: out.CancelAtPeriodEnd,
 	}, nil
+}
+
+// SetSubscriptionCancelAtPeriodEnd schedules or reverses end-of-period
+// cancellation without changing access before the paid-through timestamp.
+func SetSubscriptionCancelAtPeriodEnd(secretKey, subscriptionID string, cancel bool) error {
+	form := url.Values{}
+	form.Set("cancel_at_period_end", strconv.FormatBool(cancel))
+	return stripePost(secretKey, "/v1/subscriptions/"+subscriptionID, form, nil)
 }
 
 // UpdateSubscriptionPrice swaps the subscription's item to a new Price with
