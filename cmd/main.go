@@ -55,6 +55,7 @@ func main() {
 	routes.RetirePlaintextResetTokens()
 	routes.EnsureIdentityIndexes()
 	auth.EnsureWorkspaceIndexes()
+	routes.EnsureMachineCredentialIndexes()
 
 	// ID-012: badge-assignment provenance idempotency invariant.
 	badges.EnsureIndexes()
@@ -197,6 +198,11 @@ func main() {
 		tenantAPI.DELETE("/settings/api-key", auth.RequirePermission(auth.PermSecretsManage), routes.HandleRevokeTenantAPIKey)
 		tenantAPI.PUT("/settings/api-key/scopes", auth.RequirePermission(auth.PermSecretsManage), routes.HandleUpdateTenantAPIKeyScopes)
 		tenantAPI.GET("/settings/api-key/tools", auth.RequirePermission(auth.PermSecretsManage), routes.HandleListTenantAPIKeyTools)
+		tenantAPI.GET("/settings/machine-credentials", auth.RequirePermission(auth.PermSecretsManage), routes.HandleListMachineCredentials)
+		tenantAPI.POST("/settings/machine-credentials", auth.RequirePermission(auth.PermSecretsManage), routes.HandleCreateMachineCredential)
+		tenantAPI.PUT("/settings/machine-credentials/:id", auth.RequirePermission(auth.PermSecretsManage), routes.HandleUpdateMachineCredential)
+		tenantAPI.POST("/settings/machine-credentials/:id/rotate", auth.RequirePermission(auth.PermSecretsManage), routes.HandleRotateMachineCredential)
+		tenantAPI.DELETE("/settings/machine-credentials/:id", auth.RequirePermission(auth.PermSecretsManage), routes.HandleRevokeMachineCredential)
 
 		// Stripe Connect OAuth initiate + disconnect — owner-only secret mgmt.
 		tenantAPI.GET("/stripe/connect", auth.RequirePermission(auth.PermSecretsManage), routes.HandleStripeConnectInitiate)
