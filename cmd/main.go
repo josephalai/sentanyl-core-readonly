@@ -54,6 +54,7 @@ func main() {
 	// Retire any pre-hashing plaintext reset tokens at rest (ID-015).
 	routes.RetirePlaintextResetTokens()
 	routes.EnsureIdentityIndexes()
+	auth.EnsureWorkspaceIndexes()
 
 	// ID-012: badge-assignment provenance idempotency invariant.
 	badges.EnsureIndexes()
@@ -136,6 +137,7 @@ func main() {
 	emailLimit := httputil.RateLimit(6, 6)
 	r.POST("/api/tenant/register", authLimit, routes.HandleTenantRegister)
 	r.POST("/api/tenant/login", authLimit, routes.HandleTenantLogin)
+	r.POST("/api/tenant/invitations/accept", authLimit, routes.HandleAcceptWorkspaceInvitation)
 	r.POST("/api/customer/login", authLimit, routes.HandleCustomerLogin)
 	r.POST("/api/customer/set-password", authLimit, routes.HandleCustomerSetPassword)
 	r.POST("/api/customer/request-reset", emailLimit, routes.HandleCustomerRequestReset)
@@ -157,6 +159,13 @@ func main() {
 		// Session revocation (ID-005): current-token logout + all-device logout.
 		tenantAPI.POST("/logout", routes.HandleTenantLogout)
 		tenantAPI.POST("/logout-all", routes.HandleTenantLogoutAll)
+		// Human identity ↔ workspace membership lifecycle (ID-009).
+		tenantAPI.GET("/workspace/members", auth.RequirePermission(auth.PermSettingsManage), routes.HandleListWorkspaceMembers)
+		tenantAPI.POST("/workspace/invitations", auth.RequireOwner(), routes.HandleInviteWorkspaceMember)
+		tenantAPI.DELETE("/workspace/invitations/:id", auth.RequireOwner(), routes.HandleRevokeWorkspaceInvitation)
+		tenantAPI.PUT("/workspace/members/:id", auth.RequireOwner(), routes.HandleUpdateWorkspaceMember)
+		tenantAPI.POST("/workspace/transfer-ownership", auth.RequireOwner(), routes.HandleTransferWorkspaceOwnership)
+		tenantAPI.POST("/workspace/select/:tenantId", routes.HandleSelectWorkspace)
 		// The Settings "Reset All Data" button posts to /reset-all-data;
 		// keep this aligned with the frontend contract at
 		// frontend/src/pages/settings/SettingsPage.tsx:402.

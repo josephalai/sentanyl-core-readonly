@@ -129,6 +129,22 @@ func HandleTenantRegister(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account"})
 		return
 	}
+	membership := models.NewWorkspaceMembership(tenant.Id, accountUser.Id, auth.RoleOwner, accountUser.Id)
+	membership.Source = "registration"
+	if err := db.GetCollection(models.WorkspaceMembershipCollection).Insert(membership); err != nil {
+		_ = db.GetCollection(models.AccountUserCollection).RemoveId(accountUser.Id)
+		_ = db.GetCollection(models.TenantCollection).RemoveId(tenant.Id)
+		log.Println("Error creating owner membership:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create workspace owner"})
+		return
+	}
+	if err := db.GetCollection(models.TenantCollection).UpdateId(tenant.Id, bson.M{"$set": bson.M{"owner_membership_id": membership.Id}}); err != nil {
+		_ = db.GetCollection(models.WorkspaceMembershipCollection).RemoveId(membership.Id)
+		_ = db.GetCollection(models.AccountUserCollection).RemoveId(accountUser.Id)
+		_ = db.GetCollection(models.TenantCollection).RemoveId(tenant.Id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to establish workspace ownership"})
+		return
+	}
 
 	token, err := auth.GenerateTenantToken(accountUser)
 	if err != nil {
@@ -154,8 +170,9 @@ func HandleTenantRegister(c *gin.Context) {
 // HandleTenantLogin authenticates an AccountUser and returns a JWT.
 func HandleTenantLogin(c *gin.Context) {
 	var req struct {
-		Email    string `json:"email" binding:"required"`
-		Password string `json:"password" binding:"required"`
+		Email       string `json:"email" binding:"required"`
+		Password    string `json:"password" binding:"required"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "email and password are required"})
@@ -187,9 +204,32 @@ func HandleTenantLogin(c *gin.Context) {
 		return
 	}
 	auth.ClearLoginFailures("tenant", req.Email)
-	auditLoginFor(c, "auth.login", &accountUser, "")
 
-	token, err := auth.GenerateTenantToken(&accountUser)
+	selectedTenant := accountUser.TenantID
+	if req.WorkspaceID != "" {
+		if !bson.IsObjectIdHex(req.WorkspaceID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is invalid"})
+			return
+		}
+		selectedTenant = bson.ObjectIdHex(req.WorkspaceID)
+	}
+	workspaceUser, ok := auth.UserForWorkspace(&accountUser, selectedTenant)
+	if !ok && req.WorkspaceID == "" {
+		var membership models.WorkspaceMembership
+		if err := db.GetCollection(models.WorkspaceMembershipCollection).Find(bson.M{
+			"identity_id": accountUser.Id, "status": models.MembershipActive, "timestamps.deleted_at": nil,
+		}).Sort("_id").One(&membership); err == nil {
+			workspaceUser, ok = auth.UserForWorkspace(&accountUser, membership.TenantID)
+		}
+	}
+	if !ok {
+		auditLoginFor(c, "auth.login.failure", &accountUser, "no active workspace membership")
+		c.JSON(http.StatusForbidden, gin.H{"error": "no active membership for that workspace"})
+		return
+	}
+	auditLoginFor(c, "auth.login", workspaceUser, "")
+
+	token, err := auth.GenerateTenantToken(workspaceUser)
 	if err != nil {
 		log.Println("Error generating token:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
@@ -197,7 +237,7 @@ func HandleTenantLogin(c *gin.Context) {
 	}
 
 	var tenant models.Tenant
-	_ = db.GetCollection(models.TenantCollection).FindId(accountUser.TenantID).One(&tenant)
+	_ = db.GetCollection(models.TenantCollection).FindId(workspaceUser.TenantID).One(&tenant)
 
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
@@ -208,7 +248,7 @@ func HandleTenantLogin(c *gin.Context) {
 		"user": gin.H{
 			"id":    accountUser.Id.Hex(),
 			"email": accountUser.Email,
-			"role":  accountUser.Role,
+			"role":  workspaceUser.Role,
 		},
 	})
 }
@@ -443,21 +483,21 @@ func HandleGetTenantProfile(c *gin.Context) {
 		certsDefault = *tenant.CertificatesDefaultEnabled
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":                            tenant.Id.Hex(),
-		"business_name":                 tenant.BusinessName,
-		"subscription_status":           tenant.SubscriptionStatus,
-		"trial_ends_at":                 tenant.TrialEndsAt,
-		"stripe_public_key":             tenant.StripePublicKey,
-		"has_stripe":                    tenant.StripeSecretKey != "" || tenant.StripeConnectAccountID != "",
-		"has_webhook_secret":            tenant.StripeWebhookSecret != "",
-		"has_stripe_connect":            tenant.StripeConnectAccountID != "",
-		"stripe_connect_account_id":     tenant.StripeConnectAccountID,
-		"stripe_webhook_url":            fmt.Sprintf("%s/api/marketing/stripe/webhook?tenant_id=%s", publicAPIBase(), tenant.Id.Hex()),
-		"has_mailgun":                   tenant.MailgunAPIKey != "",
-		"has_brevo":                     tenant.BrevoAPIKey != "",
-		"certificates_default_enabled":  certsDefault,
-		"postal_address":                tenant.PostalAddress,
-		"inbox_auto_respond_enabled":    tenant.InboxAutoRespond(),
+		"id":                           tenant.Id.Hex(),
+		"business_name":                tenant.BusinessName,
+		"subscription_status":          tenant.SubscriptionStatus,
+		"trial_ends_at":                tenant.TrialEndsAt,
+		"stripe_public_key":            tenant.StripePublicKey,
+		"has_stripe":                   tenant.StripeSecretKey != "" || tenant.StripeConnectAccountID != "",
+		"has_webhook_secret":           tenant.StripeWebhookSecret != "",
+		"has_stripe_connect":           tenant.StripeConnectAccountID != "",
+		"stripe_connect_account_id":    tenant.StripeConnectAccountID,
+		"stripe_webhook_url":           fmt.Sprintf("%s/api/marketing/stripe/webhook?tenant_id=%s", publicAPIBase(), tenant.Id.Hex()),
+		"has_mailgun":                  tenant.MailgunAPIKey != "",
+		"has_brevo":                    tenant.BrevoAPIKey != "",
+		"certificates_default_enabled": certsDefault,
+		"postal_address":               tenant.PostalAddress,
+		"inbox_auto_respond_enabled":   tenant.InboxAutoRespond(),
 	})
 }
 
@@ -479,17 +519,17 @@ func HandleUpdateTenantSettings(c *gin.Context) {
 	}
 
 	var req struct {
-		BusinessName               string `json:"business_name"`
-		StripeSecretKey            string `json:"stripe_secret_key"`
-		StripePublicKey            string `json:"stripe_public_key"`
-		StripeWebhookSecret        string `json:"stripe_webhook_secret"`
-		MailgunAPIKey              string `json:"mailgun_api_key"`
+		BusinessName               string  `json:"business_name"`
+		StripeSecretKey            string  `json:"stripe_secret_key"`
+		StripePublicKey            string  `json:"stripe_public_key"`
+		StripeWebhookSecret        string  `json:"stripe_webhook_secret"`
+		MailgunAPIKey              string  `json:"mailgun_api_key"`
 		PostalAddress              *string `json:"postal_address,omitempty"`
-		MailgunDomain              string `json:"mailgun_domain"`
-		BrevoAPIKey                string `json:"brevo_api_key"`
-		CertificatesDefaultEnabled *bool  `json:"certificates_default_enabled,omitempty"`
+		MailgunDomain              string  `json:"mailgun_domain"`
+		BrevoAPIKey                string  `json:"brevo_api_key"`
+		CertificatesDefaultEnabled *bool   `json:"certificates_default_enabled,omitempty"`
 		CertificateDefaultTemplate *string `json:"certificate_default_template,omitempty"`
-		InboxAutoRespondEnabled    *bool  `json:"inbox_auto_respond_enabled,omitempty"`
+		InboxAutoRespondEnabled    *bool   `json:"inbox_auto_respond_enabled,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
