@@ -31,6 +31,7 @@ func RegisterStoryRoutes(r gin.IRouter) {
 	r.PUT("/story/:id/stop", handleStopStory)
 	r.POST("/story/:id/storylines/:storylineId", handleAddStorylineToStory)
 	r.DELETE("/story/:id/storylines/:storylineId", handleRemoveStorylineFromStory)
+	r.POST("/story/:id/merge", handleMergeStories)
 
 	// Storylines
 	r.GET("/storylines", handleGetStorylines)
@@ -351,6 +352,47 @@ func handleAddStorylineToStory(c *gin.Context) {
 	var updated pkgmodels.Story
 	db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": storyId, "subscriber_id": auth.GetTenantID(c)}).One(&updated)
 	c.JSON(http.StatusOK, gin.H{"story": updated})
+}
+
+// handleMergeStories merges one sequence (Story) into another: every storyline
+// of the source Story is appended to the target Story, producing a single
+// combined sequence. Both must belong to the calling tenant. The source is left
+// intact (non-destructive) — the caller can delete it separately if desired.
+func handleMergeStories(c *gin.Context) {
+	targetId := c.Param("id")
+	var req struct {
+		FromStoryID string `json:"from_story_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.FromStoryID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from_story_id is required"})
+		return
+	}
+	if req.FromStoryID == targetId {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot merge a story into itself"})
+		return
+	}
+	sid := auth.GetTenantID(c)
+	var src pkgmodels.Story
+	if err := db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": req.FromStoryID, "subscriber_id": sid}).One(&src); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "source story not found"})
+		return
+	}
+	var target pkgmodels.Story
+	if err := db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": targetId, "subscriber_id": sid}).One(&target); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "target story not found"})
+		return
+	}
+	if len(src.Storylines) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source story has no storylines to merge"})
+		return
+	}
+	db.GetCollection(pkgmodels.StoryCollection).Update(
+		bson.M{"public_id": targetId, "subscriber_id": sid},
+		bson.M{"$push": bson.M{"storylines": bson.M{"$each": src.Storylines}}},
+	)
+	var updated pkgmodels.Story
+	db.GetCollection(pkgmodels.StoryCollection).Find(bson.M{"public_id": targetId, "subscriber_id": sid}).One(&updated)
+	c.JSON(http.StatusOK, gin.H{"story": updated, "merged_storylines": len(src.Storylines)})
 }
 
 func handleRemoveStorylineFromStory(c *gin.Context) {
