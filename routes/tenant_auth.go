@@ -146,6 +146,10 @@ func HandleTenantRegister(c *gin.Context) {
 		return
 	}
 
+	// Seed a usable starting point so the dashboard and Advisor aren't empty on
+	// day one. Best-effort: a seed failure is logged but never fails signup.
+	seedTenantDefaults(tenant.Id)
+
 	token, err := auth.GenerateTenantToken(accountUser)
 	if err != nil {
 		log.Println("Error generating token:", err)
@@ -165,6 +169,71 @@ func HandleTenantRegister(c *gin.Context) {
 			"role":  accountUser.Role,
 		},
 	})
+}
+
+// seedTenantDefaults gives a brand-new workspace a usable starting point: one
+// audience list, three contact-label badges (tags), and a ready-to-embed
+// lead-capture form already wired to add submitters to the list and tag them
+// "Lead". This mirrors what the Advisor's lists_create / badges_create /
+// forms_create tools produce, so a fresh tenant (and its Advisor) has something
+// to build on instead of an empty workspace. Best-effort — every step is
+// non-fatal; a seed failure is logged and registration still succeeds.
+func seedTenantDefaults(tenantID bson.ObjectId) {
+	now := time.Now()
+	tenantHex := tenantID.Hex()
+
+	list := &models.EmailList{
+		Id:           bson.NewObjectId(),
+		PublicId:     utils.GeneratePublicId(),
+		SubscriberId: tenantHex,
+		Name:         "All Subscribers",
+	}
+	list.CreatedAt = &now
+	if err := db.GetCollection(models.EmailListCollection).Insert(list); err != nil {
+		log.Printf("seedTenantDefaults: list insert failed for %s: %v", tenantHex, err)
+		return
+	}
+
+	mkBadge := func(name string) *models.Badge {
+		b := &models.Badge{
+			Id:           bson.NewObjectId(),
+			PublicId:     utils.GeneratePublicId(),
+			TenantID:     tenantID,
+			SubscriberId: tenantHex,
+			Name:         name,
+			Kind:         models.BadgeKindContactLabel,
+		}
+		b.CreatedAt = &now
+		if err := db.GetCollection(models.BadgeCollection).Insert(b); err != nil {
+			log.Printf("seedTenantDefaults: badge %q insert failed for %s: %v", name, tenantHex, err)
+		}
+		return b
+	}
+	leadBadge := mkBadge("Lead")
+	mkBadge("Customer")
+	mkBadge("VIP")
+
+	form := &models.PageForm{
+		Id:       bson.NewObjectId(),
+		PublicId: utils.GeneratePublicId(),
+		TenantID: tenantID,
+		Name:     "Newsletter Signup",
+		FormType: "lead",
+		Fields: []*models.FormField{
+			{FieldName: "first_name", FieldType: "text", Required: true, MapsTo: "first_name", Placeholder: "First name"},
+			{FieldName: "email", FieldType: "email", Required: true, Placeholder: "you@example.com"},
+		},
+		OnSubmit: &models.FormOnSubmit{
+			UpsertContact:   true,
+			WriteAttributes: true,
+			AddToListIds:    []string{list.PublicId},
+			AssignBadgeIds:  []string{leadBadge.PublicId},
+		},
+	}
+	form.CreatedAt = &now
+	if err := db.GetCollection(models.PageFormCollection).Insert(form); err != nil {
+		log.Printf("seedTenantDefaults: form insert failed for %s: %v", tenantHex, err)
+	}
 }
 
 // HandleTenantLogin authenticates an AccountUser and returns a JWT.
